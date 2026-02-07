@@ -13,6 +13,8 @@ from core.auth import Auth
 from core.session import SessionManager
 from core.router import Router
 from agents.claude_code import ClaudeCodeAgent
+from agents.codex_cli import CodexAgent
+from agents.gemini_cli import GeminiAgent
 from channels.telegram import TelegramChannel
 
 
@@ -74,7 +76,23 @@ async def main():
             )
             logger.info("✅ Claude Code agent initialized")
         
-        # TODO: Add Codex and Gemini agents in Phase 3
+        # Codex agent (Phase 3)
+        if config['agents'].get('codex', {}).get('enabled', False):
+            agents['codex'] = CodexAgent(
+                name='codex',
+                config=config['agents']['codex'],
+                workspace_base=workspace_base
+            )
+            logger.info("✅ Codex agent initialized")
+        
+        # Gemini agent (Phase 3)
+        if config['agents'].get('gemini', {}).get('enabled', False):
+            agents['gemini'] = GeminiAgent(
+                name='gemini',
+                config=config['agents']['gemini'],
+                workspace_base=workspace_base
+            )
+            logger.info("✅ Gemini agent initialized")
         
         if not agents:
             logger.error("❌ No agents enabled")
