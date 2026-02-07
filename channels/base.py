@@ -10,8 +10,9 @@ from typing import Optional, BinaryIO, Callable, Awaitable, List
 class Attachment:
     """File attachment"""
     filename: str
-    data: BinaryIO
+    filepath: str  # Local path to downloaded file
     mime_type: str
+    size_bytes: int
 
 
 @dataclass

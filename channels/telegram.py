@@ -2,13 +2,16 @@
 Telegram channel implementation
 """
 import logging
-from typing import Optional, Callable, Awaitable
+import os
+import tempfile
+from pathlib import Path
+from typing import Optional, Callable, Awaitable, List
 
-from telegram import Update
+from telegram import Update, Document, PhotoSize
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 
-from channels.base import BaseChannel, IncomingMessage
+from channels.base import BaseChannel, IncomingMessage, Attachment
 from core.formatter import OutputFormatter
 
 logger = logging.getLogger(__name__)
@@ -33,14 +36,9 @@ class TelegramChannel(BaseChannel):
         """Start Telegram bot"""
         self.app = Application.builder().token(self.token).build()
         
-        # Register handlers
+        # Register handlers for all message types
         self.app.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND, 
-            self._on_message
-        ))
-        
-        self.app.add_handler(MessageHandler(
-            filters.COMMAND,
+            filters.TEXT | filters.PHOTO | filters.Document.ALL | filters.ATTACHMENT,
             self._on_message
         ))
         
@@ -161,20 +159,26 @@ class TelegramChannel(BaseChannel):
     
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming message"""
-        if not update.message or not update.message.text:
+        if not update.message:
             return
+        
+        # Extract text (may be None for media-only messages)
+        text = update.message.text or update.message.caption or ""
+        
+        # Process attachments
+        attachments = await self._process_attachments(update)
         
         # Build IncomingMessage
         msg = IncomingMessage(
             channel="telegram",
             chat_id=str(update.effective_chat.id),
             user_id=str(update.effective_user.id),
-            text=update.message.text,
+            text=text,
             is_private=update.effective_chat.type == "private",
             is_reply_to_bot=False,  # TODO: check if replying to bot
             is_mention_bot=False,   # TODO: check for @mention
             reply_to_text=None,
-            attachments=[]
+            attachments=attachments
         )
         
         # Group chat filtering
@@ -184,7 +188,7 @@ class TelegramChannel(BaseChannel):
             # 2. Messages mentioning bot
             # 3. Commands directed to bot
             # For Phase 1, we'll just handle private chats
-            logger.debug(f"Ignoring group message (Phase 1): {msg.text[:50]}")
+            logger.debug(f"Ignoring group message (Phase 1)")
             return
         
         # Forward to handler
@@ -194,3 +198,80 @@ class TelegramChannel(BaseChannel):
             except Exception as e:
                 logger.error(f"Message handler error: {e}", exc_info=True)
                 await self.send_text(msg.chat_id, f"❌ 内部错误: {str(e)}")
+    
+    async def _process_attachments(self, update: Update) -> List[Attachment]:
+        """Download and process attachments from message"""
+        attachments = []
+        message = update.message
+        
+        # Create temp directory for this message
+        temp_dir = Path(tempfile.gettempdir()) / "cli-gateway" / str(message.chat_id)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Handle photos
+            if message.photo:
+                # Get largest photo
+                photo = message.photo[-1]
+                file = await self.app.bot.get_file(photo.file_id)
+                filepath = temp_dir / f"photo_{photo.file_id}.jpg"
+                await file.download_to_drive(filepath)
+                
+                attachments.append(Attachment(
+                    filename=f"photo_{photo.file_id}.jpg",
+                    filepath=str(filepath),
+                    mime_type="image/jpeg",
+                    size_bytes=photo.file_size or 0
+                ))
+                logger.info(f"Downloaded photo: {filepath}")
+            
+            # Handle documents
+            if message.document:
+                doc: Document = message.document
+                file = await self.app.bot.get_file(doc.file_id)
+                filepath = temp_dir / (doc.file_name or f"file_{doc.file_id}")
+                await file.download_to_drive(filepath)
+                
+                attachments.append(Attachment(
+                    filename=doc.file_name or f"file_{doc.file_id}",
+                    filepath=str(filepath),
+                    mime_type=doc.mime_type or "application/octet-stream",
+                    size_bytes=doc.file_size or 0
+                ))
+                logger.info(f"Downloaded document: {filepath}")
+            
+            # Handle video
+            if message.video:
+                video = message.video
+                file = await self.app.bot.get_file(video.file_id)
+                filepath = temp_dir / f"video_{video.file_id}.mp4"
+                await file.download_to_drive(filepath)
+                
+                attachments.append(Attachment(
+                    filename=f"video_{video.file_id}.mp4",
+                    filepath=str(filepath),
+                    mime_type=video.mime_type or "video/mp4",
+                    size_bytes=video.file_size or 0
+                ))
+                logger.info(f"Downloaded video: {filepath}")
+            
+            # Handle audio
+            if message.audio:
+                audio = message.audio
+                file = await self.app.bot.get_file(audio.file_id)
+                filename = audio.file_name or f"audio_{audio.file_id}.mp3"
+                filepath = temp_dir / filename
+                await file.download_to_drive(filepath)
+                
+                attachments.append(Attachment(
+                    filename=filename,
+                    filepath=str(filepath),
+                    mime_type=audio.mime_type or "audio/mpeg",
+                    size_bytes=audio.file_size or 0
+                ))
+                logger.info(f"Downloaded audio: {filepath}")
+        
+        except Exception as e:
+            logger.error(f"Failed to download attachment: {e}", exc_info=True)
+        
+        return attachments

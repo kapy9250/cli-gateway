@@ -210,8 +210,17 @@ class Router:
 
         prompt = message.text
         if message.attachments:
-            names = ", ".join(att.filename for att in message.attachments)
-            prompt = f"{prompt}\n\n[附件: {names}]" if prompt else f"[附件: {names}]"
+            # Build attachment info with file paths
+            att_lines = []
+            for att in message.attachments:
+                att_lines.append(f"- {att.filename} ({att.mime_type}, {att.size_bytes} bytes)")
+                att_lines.append(f"  Path: {att.filepath}")
+            
+            att_info = "\n".join(att_lines)
+            if prompt:
+                prompt = f"{prompt}\n\n附件:\n{att_info}"
+            else:
+                prompt = f"附件:\n{att_info}"
 
         await self.channel.send_typing(message.chat_id)
 
