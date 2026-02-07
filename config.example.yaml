@@ -1,0 +1,74 @@
+# CLI Gateway Configuration Template
+# Copy to config.yaml and fill in your values
+
+# ──────────── 鉴权 ────────────
+auth:
+  allowed_users:
+    - 123456789  # Replace with your Telegram user ID
+
+# ──────────── 消息通道 ────────────
+channels:
+  telegram:
+    enabled: true
+    token: "${TG_BOT_TOKEN}"  # Set via environment variable
+    parse_mode: "HTML"
+    max_message_length: 4096
+
+# ──────────── CLI Agents ────────────
+agents:
+  claude:
+    enabled: true
+    display_name: "Claude Code"
+    command: "claude"
+    args_template: ["-p", "{prompt}", "--session-id", "{session_id}", "--output-format", "text"]
+    interactive: false
+    timeout: 300
+    max_concurrent_sessions: 3
+    env:
+      CLAUDE_CODE_DISABLE_NONINTERACTIVE_CONSENT: "1"
+  
+  codex:
+    enabled: false
+    display_name: "Codex"
+    command: "codex"
+    args_template: ["--quiet", "{prompt}", "--approval-mode", "full-auto"]
+    interactive: false
+    timeout: 300
+    max_concurrent_sessions: 2
+    env: {}
+  
+  gemini:
+    enabled: false
+    display_name: "Gemini CLI"
+    command: "gemini"
+    args_template: ["-p", "{prompt}"]
+    interactive: false
+    timeout: 300
+    max_concurrent_sessions: 2
+    env: {}
+
+# ──────────── Watchdog ────────────
+watchdog:
+  enabled: true
+  check_interval: 30
+  max_response_time: 120
+  max_memory_per_session_mb: 512
+  notify_on_restart: true
+
+# ──────────── 会话管理 ────────────
+session:
+  workspace_base: "./workspaces"
+  cleanup_inactive_after_hours: 24
+  cleanup_files_after_days: 7
+  max_sessions_per_user: 5
+
+# ──────────── 日志 ────────────
+logging:
+  level: "INFO"
+  file: "./logs/gateway.log"
+  max_size_mb: 50
+  backup_count: 3
+  
+  audit:
+    enabled: true
+    file: "./logs/audit.log"

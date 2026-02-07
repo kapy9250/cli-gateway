@@ -1,0 +1,36 @@
+[Unit]
+Description=CLI Gateway - Telegram to CLI Agent Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/cli-gateway
+ExecStart=/usr/bin/python3 main.py
+
+# Environment
+Environment=TG_BOT_TOKEN=your-token-here
+# Or use: EnvironmentFile=/opt/cli-gateway/.env
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Security (optional - adjust based on needs)
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=80%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cli-gateway
+
+[Install]
+WantedBy=multi-user.target
