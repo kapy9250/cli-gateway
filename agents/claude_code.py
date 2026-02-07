@@ -45,11 +45,15 @@ class ClaudeCodeAgent(BaseAgent):
         logger.info(f"Created Claude Code session {session_id} at {work_dir}")
         return session
     
-    async def send_message(self, session_id: str, message: str) -> AsyncIterator[str]:
+    async def send_message(self, session_id: str, message: str, model: str = None, params: dict = None) -> AsyncIterator[str]:
         """
         Send message to Claude Code and stream output
         
-        For Phase 1: Simple subprocess call, collect all output, yield once
+        Args:
+            session_id: Session ID
+            message: User message/prompt
+            model: Model alias (e.g. "sonnet", "opus")
+            params: Custom parameters (e.g. {"thinking": "high"})
         """
         session = self.sessions.get(session_id)
         if not session:
@@ -70,6 +74,23 @@ class ClaudeCodeAgent(BaseAgent):
                 arg = arg.replace("{prompt}", message)
                 arg = arg.replace("{session_id}", session_id)
                 args.append(arg)
+            
+            # Add model parameter if specified
+            if model:
+                model_flag = self.config.get('supported_params', {}).get('model')
+                if model_flag:
+                    # Get full model name from alias
+                    models = self.config.get('models', {})
+                    model_full = models.get(model, model)  # Fallback to alias if not found
+                    args.extend([model_flag, model_full])
+            
+            # Add custom parameters
+            if params:
+                supported = self.config.get('supported_params', {})
+                for key, value in params.items():
+                    param_flag = supported.get(key)
+                    if param_flag:
+                        args.extend([param_flag, str(value)])
             
             # Environment
             env = os.environ.copy()

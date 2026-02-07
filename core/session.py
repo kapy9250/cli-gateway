@@ -23,6 +23,12 @@ class ManagedSession:
     agent_name: str
     created_at: float
     last_active: float
+    model: Optional[str] = None  # Model name (short alias)
+    params: Optional[Dict[str, str]] = None  # Custom parameters
+    
+    def __post_init__(self):
+        if self.params is None:
+            self.params = {}
 
 
 class SessionManager:
@@ -57,6 +63,8 @@ class SessionManager:
                     agent_name=str(item["agent_name"]),
                     created_at=float(item["created_at"]),
                     last_active=float(item["last_active"]),
+                    model=item.get("model"),
+                    params=item.get("params", {}),
                 )
             self.sessions = loaded
             logger.info("Loaded %d sessions from disk", len(self.sessions))
@@ -90,6 +98,8 @@ class SessionManager:
         chat_id: str,
         agent_name: str,
         session_id: Optional[str] = None,
+        model: Optional[str] = None,
+        params: Optional[Dict[str, str]] = None,
     ) -> ManagedSession:
         """Create and activate a new session for user."""
         sid = session_id or self.generate_session_id()
@@ -101,6 +111,8 @@ class SessionManager:
             agent_name=agent_name,
             created_at=now,
             last_active=now,
+            model=model,
+            params=params or {},
         )
         self.sessions[sid] = session
         self.active_by_user[str(user_id)] = sid
@@ -158,3 +170,33 @@ class SessionManager:
 
         self._save()
         return session
+    
+    def update_model(self, session_id: str, model: str) -> bool:
+        """Update session model."""
+        session = self.sessions.get(session_id)
+        if session is None:
+            return False
+        session.model = model
+        session.last_active = time.time()
+        self._save()
+        return True
+    
+    def update_param(self, session_id: str, key: str, value: str) -> bool:
+        """Update session parameter."""
+        session = self.sessions.get(session_id)
+        if session is None:
+            return False
+        session.params[key] = value
+        session.last_active = time.time()
+        self._save()
+        return True
+    
+    def reset_params(self, session_id: str, default_params: Dict[str, str]) -> bool:
+        """Reset session params to defaults."""
+        session = self.sessions.get(session_id)
+        if session is None:
+            return False
+        session.params = default_params.copy()
+        session.last_active = time.time()
+        self._save()
+        return True

@@ -87,7 +87,7 @@ async def main():
         telegram = TelegramChannel(config['channels']['telegram'])
         
         # Router
-        router = Router(auth, session_manager, agents, telegram)
+        router = Router(auth, session_manager, agents, telegram, config)
         
         # Wire up message handler
         telegram.set_message_handler(router.handle_message)
