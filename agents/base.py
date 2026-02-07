@@ -5,6 +5,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional, List, Dict, Any
 from pathlib import Path
+import asyncio
+import os
+import signal
+import shutil
+import time
+import uuid
 
 
 @dataclass
@@ -42,6 +48,8 @@ class BaseAgent(ABC):
         self.workspace_base = workspace_base / name
         self.workspace_base.mkdir(parents=True, exist_ok=True)
         self.sessions: Dict[str, SessionInfo] = {}
+        self._session_locks: Dict[str, asyncio.Lock] = {}
+        self._active_processes: Dict[str, asyncio.subprocess.Process] = {}
     
     @abstractmethod
     async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:
@@ -52,6 +60,23 @@ class BaseAgent(ABC):
             SessionInfo object
         """
         pass
+
+    def create_managed_session(self, user_id: str) -> SessionInfo:
+        """Create and register a standard non-interactive session"""
+        session_id = str(uuid.uuid4())
+        work_dir = self.workspace_base / f"sess_{session_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        session = SessionInfo(
+            session_id=session_id,
+            agent_name=self.name,
+            user_id=user_id,
+            work_dir=work_dir,
+            created_at=time.time(),
+            last_active=time.time()
+        )
+        self.register_session(session)
+        return session
     
     @abstractmethod
     async def send_message(self, session_id: str, message: str) -> AsyncIterator[str]:
@@ -67,12 +92,77 @@ class BaseAgent(ABC):
     async def cancel(self, session_id: str):
         """Cancel current operation (send SIGINT)"""
         pass
+
+    async def cancel_active_process(self, session_id: str) -> None:
+        """Shared cancellation logic for non-interactive subprocesses"""
+        session = self.sessions.get(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+
+        process = self.get_active_process(session_id)
+        if not process or process.returncode is not None:
+            session.is_busy = False
+            return
+
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except Exception:
+            process.terminate()
+
+        try:
+            await asyncio.wait_for(process.wait(), timeout=3.0)
+        except asyncio.TimeoutError:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except Exception:
+                process.kill()
+            await process.wait()
+        finally:
+            self.clear_active_process(session_id)
+            session.is_busy = False
+            session.last_active = time.time()
     
     @abstractmethod
     async def destroy_session(self, session_id: str):
         """Terminate session and optionally cleanup"""
         pass
+
+    def destroy_managed_session(self, session_id: str) -> SessionInfo:
+        """Shared destroy path for standard sessions"""
+        session = self.sessions.get(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        self.unregister_session(session_id)
+        try:
+            if session.work_dir.exists():
+                shutil.rmtree(session.work_dir, ignore_errors=True)
+        except Exception:
+            pass
+        return session
     
+    def register_session(self, session: SessionInfo) -> None:
+        """Register session and initialize concurrency lock"""
+        self.sessions[session.session_id] = session
+        self._session_locks[session.session_id] = asyncio.Lock()
+
+    def unregister_session(self, session_id: str) -> None:
+        """Unregister session and cleanup lock"""
+        self.sessions.pop(session_id, None)
+        self._session_locks.pop(session_id, None)
+        self._active_processes.pop(session_id, None)
+
+    def set_active_process(self, session_id: str, process: asyncio.subprocess.Process) -> None:
+        """Track active subprocess for cancellation"""
+        self._active_processes[session_id] = process
+
+    def clear_active_process(self, session_id: str) -> None:
+        """Clear active subprocess tracking"""
+        self._active_processes.pop(session_id, None)
+
+    def get_active_process(self, session_id: str) -> Optional[asyncio.subprocess.Process]:
+        """Get active subprocess for a session"""
+        return self._active_processes.get(session_id)
+
     def get_session_info(self, session_id: str) -> Optional[SessionInfo]:
         """Get session metadata"""
         return self.sessions.get(session_id)

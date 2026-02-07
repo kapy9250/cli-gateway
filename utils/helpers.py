@@ -41,18 +41,28 @@ def sanitize_session_id(session_id: str) -> str:
 
 
 def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
-    """Truncate text to max_length, preserving word boundaries if possible"""
+    """Truncate text safely; strip markup first to avoid broken HTML/Markdown tags"""
     if len(text) <= max_length:
         return text
-    
+
+    # If text appears to contain markup, convert to plain text before truncation
+    has_html = bool(re.search(r'</?\w+[^>]*>', text))
+    has_markdown = bool(re.search(r'[*_`\[\]]', text))
+    if has_html or has_markdown:
+        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'[*_`\[\]()~>#+\-=|{}.!]', '', text)
+
+    if len(text) <= max_length:
+        return text
+
     truncated = text[:max_length - len(suffix)]
     # Try to truncate at last newline or space
     last_newline = truncated.rfind('\n')
     last_space = truncated.rfind(' ')
-    
+
     if last_newline > max_length * 0.8:
         truncated = truncated[:last_newline]
     elif last_space > max_length * 0.8:
         truncated = truncated[:last_space]
-    
+
     return truncated + suffix

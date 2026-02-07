@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -34,13 +35,16 @@ class ManagedSession:
 class SessionManager:
     """Manage active session for each user and persist metadata."""
 
-    def __init__(self, workspace_base: Path):
+    def __init__(self, workspace_base: Path, max_sessions_per_user: int = 5, cleanup_inactive_after_hours: int = 24):
         self.workspace_base = workspace_base
         self.workspace_base.mkdir(parents=True, exist_ok=True)
         self.state_file = self.workspace_base / ".sessions.json"
+        self.max_sessions_per_user = max_sessions_per_user
+        self.cleanup_inactive_after_hours = cleanup_inactive_after_hours
 
         self.sessions: Dict[str, ManagedSession] = {}
         self.active_by_user: Dict[str, str] = {}
+        self._save_lock = threading.Lock()
         self._load()
 
     def _load(self) -> None:
@@ -80,10 +84,13 @@ class SessionManager:
             },
         }
         try:
-            self.state_file.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            with self._save_lock:
+                tmp_file = self.state_file.with_suffix(".json.tmp")
+                tmp_file.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                tmp_file.replace(self.state_file)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to save session state to %s", self.state_file)
 
@@ -102,6 +109,13 @@ class SessionManager:
         params: Optional[Dict[str, str]] = None,
     ) -> ManagedSession:
         """Create and activate a new session for user."""
+        user = str(user_id)
+        existing = self.list_user_sessions(user)
+        if self.max_sessions_per_user > 0 and len(existing) >= self.max_sessions_per_user:
+            # Remove the oldest inactive session for this user
+            oldest = sorted(existing, key=lambda s: s.last_active)[0]
+            self.destroy_session(oldest.session_id)
+
         sid = session_id or self.generate_session_id()
         now = time.time()
         session = ManagedSession(
@@ -115,7 +129,7 @@ class SessionManager:
             params=params or {},
         )
         self.sessions[sid] = session
-        self.active_by_user[str(user_id)] = sid
+        self.active_by_user[user] = sid
         self._save()
         return session
 
@@ -200,3 +214,19 @@ class SessionManager:
         session.last_active = time.time()
         self._save()
         return True
+
+    def cleanup_inactive_sessions(self) -> int:
+        """Cleanup sessions inactive longer than configured threshold."""
+        if self.cleanup_inactive_after_hours <= 0:
+            return 0
+
+        cutoff = time.time() - (self.cleanup_inactive_after_hours * 3600)
+        stale_ids = [sid for sid, s in self.sessions.items() if s.last_active < cutoff]
+        if not stale_ids:
+            return 0
+
+        for sid in stale_ids:
+            self.destroy_session(sid)
+
+        logger.info("Cleaned up %d inactive sessions", len(stale_ids))
+        return len(stale_ids)

@@ -3,6 +3,7 @@ Telegram channel implementation
 """
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional, Callable, Awaitable, List
@@ -28,6 +29,8 @@ class TelegramChannel(BaseChannel):
         self.max_length = config.get('max_message_length', 4096)
         
         self.app: Optional[Application] = None
+        self.bot_id: Optional[int] = None
+        self.bot_username: Optional[str] = None
         self.formatter = OutputFormatter(config)
         
         logger.info("TelegramChannel initialized")
@@ -44,6 +47,9 @@ class TelegramChannel(BaseChannel):
         
         # Start polling
         await self.app.initialize()
+        me = await self.app.bot.get_me()
+        self.bot_id = me.id
+        self.bot_username = me.username.lower() if me.username else None
         await self.app.start()
         await self.app.updater.start_polling()
         
@@ -57,6 +63,15 @@ class TelegramChannel(BaseChannel):
             await self.app.shutdown()
             logger.info("Telegram bot stopped")
     
+    @staticmethod
+    def _strip_markup_for_plain(text: str) -> str:
+        """Strip simple HTML/Markdown markers before plain-text fallback sending"""
+        text = text.replace("&lt;", "<").replace("&gt;", ">")
+        text = text.replace("&amp;", "&")
+        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'[*_`\[\]()~>#+\-=|{}.!]', '', text)
+        return text
+
     async def send_text(self, chat_id: str, text: str) -> Optional[int]:
         """Send text message with automatic pagination. Returns message_id of first chunk."""
         if not self.app:
@@ -82,11 +97,11 @@ class TelegramChannel(BaseChannel):
                     first_message_id = msg.message_id
             except Exception as e:
                 logger.error(f"Failed to send message: {e}")
-                # Try sending without parse mode
+                # Try sending plain text without parse mode
                 try:
                     msg = await self.app.bot.send_message(
                         chat_id=int(chat_id),
-                        text=chunk
+                        text=self._strip_markup_for_plain(chunk)
                     )
                     if first_message_id is None:
                         first_message_id = msg.message_id
@@ -147,12 +162,12 @@ class TelegramChannel(BaseChannel):
             )
         except Exception as e:
             logger.error(f"Failed to edit message: {e}")
-            # If edit fails, try without parse mode
+            # If edit fails, try plain text without parse mode
             try:
                 await self.app.bot.edit_message_text(
                     chat_id=int(chat_id),
                     message_id=message_id,
-                    text=text
+                    text=self._strip_markup_for_plain(text)
                 )
             except:
                 logger.error(f"Failed to edit message even without parse mode")
@@ -168,6 +183,16 @@ class TelegramChannel(BaseChannel):
         # Process attachments
         attachments = await self._process_attachments(update)
         
+        # Determine if message is reply/mention to bot
+        is_reply_to_bot = False
+        if update.message.reply_to_message and update.message.reply_to_message.from_user and self.bot_id:
+            is_reply_to_bot = update.message.reply_to_message.from_user.id == self.bot_id
+
+        is_mention_bot = False
+        if self.bot_username and text:
+            if f"@{self.bot_username}" in text.lower():
+                is_mention_bot = True
+
         # Build IncomingMessage
         msg = IncomingMessage(
             channel="telegram",
@@ -175,21 +200,19 @@ class TelegramChannel(BaseChannel):
             user_id=str(update.effective_user.id),
             text=text,
             is_private=update.effective_chat.type == "private",
-            is_reply_to_bot=False,  # TODO: check if replying to bot
-            is_mention_bot=False,   # TODO: check for @mention
-            reply_to_text=None,
+            is_reply_to_bot=is_reply_to_bot,
+            is_mention_bot=is_mention_bot,
+            reply_to_text=update.message.reply_to_message.text if update.message.reply_to_message else None,
             attachments=attachments
         )
         
         # Group chat filtering
         if not msg.is_private:
-            # In groups, only respond to:
-            # 1. Replies to bot
-            # 2. Messages mentioning bot
-            # 3. Commands directed to bot
-            # For Phase 1, we'll just handle private chats
-            logger.debug(f"Ignoring group message (Phase 1)")
-            return
+            # In groups, only respond to replies/mentions or slash commands
+            is_command = text.strip().startswith('/') if text else False
+            if not (msg.is_reply_to_bot or msg.is_mention_bot or is_command):
+                logger.debug("Ignoring group message (not reply/mention/command)")
+                return
         
         # Forward to handler
         if self._message_handler:
@@ -198,7 +221,33 @@ class TelegramChannel(BaseChannel):
             except Exception as e:
                 logger.error(f"Message handler error: {e}", exc_info=True)
                 await self.send_text(msg.chat_id, f"❌ 内部错误: {str(e)}")
+            finally:
+                await self.cleanup_attachments(msg)
     
+    async def cleanup_attachments(self, message: IncomingMessage):
+        """Delete downloaded attachment files and empty temp directories"""
+        if not message.attachments:
+            return
+
+        for attachment in message.attachments:
+            try:
+                p = Path(attachment.filepath)
+                if p.exists():
+                    p.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to cleanup attachment {attachment.filepath}: {e}")
+
+        # Best-effort cleanup of empty chat temp dir
+        try:
+            chat_temp_dir = Path(tempfile.gettempdir()) / "cli-gateway" / str(message.chat_id)
+            if chat_temp_dir.exists() and not any(chat_temp_dir.iterdir()):
+                chat_temp_dir.rmdir()
+            root_temp_dir = Path(tempfile.gettempdir()) / "cli-gateway"
+            if root_temp_dir.exists() and not any(root_temp_dir.iterdir()):
+                root_temp_dir.rmdir()
+        except Exception:
+            pass
+
     async def _process_attachments(self, update: Update) -> List[Attachment]:
         """Download and process attachments from message"""
         attachments = []

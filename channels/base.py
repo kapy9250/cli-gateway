@@ -73,3 +73,7 @@ class BaseChannel(ABC):
     def set_message_handler(self, handler: Callable[[IncomingMessage], Awaitable[None]]):
         """Register message callback"""
         self._message_handler = handler
+
+    async def cleanup_attachments(self, message: IncomingMessage):
+        """Optional cleanup hook for downloaded attachments"""
+        return

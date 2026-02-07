@@ -4,6 +4,7 @@ Claude Code CLI agent adapter
 import asyncio
 import logging
 import os
+import signal
 import secrets
 import uuid
 import time
@@ -24,25 +25,8 @@ class ClaudeCodeAgent(BaseAgent):
     
     async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:
         """Create new Claude Code session"""
-        # Generate session ID
-        session_id = str(uuid.uuid4())  # 8 hex chars
-        
-        # Create workspace
-        work_dir = self.workspace_base / f"sess_{session_id}"
-        work_dir.mkdir(parents=True, exist_ok=True)
-        
-        session = SessionInfo(
-            session_id=session_id,
-            agent_name=self.name,
-            user_id=user_id,
-            work_dir=work_dir,
-            created_at=time.time(),
-            last_active=time.time()
-        )
-        
-        self.sessions[session_id] = session
-        
-        logger.info(f"Created Claude Code session {session_id} at {work_dir}")
+        session = self.create_managed_session(user_id)
+        logger.info(f"Created Claude Code session {session.session_id} at {session.work_dir}")
         return session
     
     async def send_message(self, session_id: str, message: str, model: str = None, params: dict = None) -> AsyncIterator[str]:
@@ -58,7 +42,15 @@ class ClaudeCodeAgent(BaseAgent):
         session = self.sessions.get(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
-        
+
+        lock = self._session_locks.get(session_id)
+        if not lock:
+            raise ValueError(f"Session lock for {session_id} not found")
+        if lock.locked():
+            yield "⚠️ 会话正忙，请稍后重试或先取消当前任务。"
+            return
+        await lock.acquire()
+
         # Mark as busy
         session.is_busy = True
         session.last_active = time.time()
@@ -99,7 +91,13 @@ class ClaudeCodeAgent(BaseAgent):
             # Timeout
             timeout = self.config.get('timeout', 300)
             
-            logger.info(f"Executing: {command} {' '.join(args)}")
+            logger.info(
+                "Executing command=%s session=%s args_count=%d prompt_len=%d",
+                command,
+                session_id,
+                len(args),
+                len(message)
+            )
             
             # Execute
             try:
@@ -109,8 +107,10 @@ class ClaudeCodeAgent(BaseAgent):
                     cwd=str(session.work_dir),
                     env=env,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
+                    stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True
                 )
+                self.set_active_process(session_id, process)
                 
                 # Stream stdout in real-time
                 start_time = time.time()
@@ -119,7 +119,10 @@ class ClaudeCodeAgent(BaseAgent):
                 while True:
                     # Check timeout
                     if time.time() - start_time > timeout:
-                        process.kill()
+                        try:
+                            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                        except Exception:
+                            process.kill()
                         await process.wait()
                         yield f"⚠️ 操作超时（{timeout}秒）"
                         break
@@ -165,12 +168,16 @@ class ClaudeCodeAgent(BaseAgent):
             except asyncio.TimeoutError:
                 logger.error(f"Claude Code timeout after {timeout}s")
                 yield f"⚠️ 操作超时（{timeout}秒）"
-                # Try to kill process
+                # Try to kill process group
                 try:
-                    process.kill()
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                     await process.wait()
-                except:
-                    pass
+                except Exception:
+                    try:
+                        process.kill()
+                        await process.wait()
+                    except Exception:
+                        pass
             
             except FileNotFoundError:
                 error_msg = f"❌ Claude Code CLI 未安装或未找到命令: {command}"
@@ -183,22 +190,20 @@ class ClaudeCodeAgent(BaseAgent):
                 yield error_msg
         
         finally:
+            self.clear_active_process(session_id)
             session.is_busy = False
             session.last_active = time.time()
+            if lock.locked():
+                lock.release()
     
     async def cancel(self, session_id: str):
-        """Cancel current operation (not implemented in Phase 1)"""
-        logger.warning(f"Cancel not implemented for session {session_id}")
+        """Cancel current operation by terminating active subprocess"""
+        logger.info(f"Cancelling session {session_id}")
+        await self.cancel_active_process(session_id)
     
     async def destroy_session(self, session_id: str):
         """Destroy session"""
-        session = self.sessions.get(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
-        
-        # Remove from sessions dict
-        del self.sessions[session_id]
-        
+        session = self.destroy_managed_session(session_id)
         logger.info(f"Destroyed session {session_id} (workspace retained at {session.work_dir})")
     
     def health_check(self, session_id: str) -> dict:
