@@ -215,11 +215,33 @@ class Router:
 
         await self.channel.send_typing(message.chat_id)
 
-        chunks = []
+        # Stream output with progressive updates
+        buffer = ""
+        message_id = None
+        last_update_time = 0
+        update_interval = 2.0  # Update every 2 seconds
+        
         async for chunk in agent.send_message(current.session_id, prompt):
             if chunk:
-                chunks.append(chunk)
+                buffer += chunk
+                
+                # Update message periodically to avoid API rate limits
+                import time
+                current_time = time.time()
+                if current_time - last_update_time >= update_interval:
+                    if message_id is None:
+                        # Send initial message
+                        message_id = await self.channel.send_text(message.chat_id, buffer or "⏳ 处理中...")
+                    else:
+                        # Edit existing message
+                        await self.channel.edit_message(message.chat_id, message_id, buffer)
+                    last_update_time = current_time
 
-        response = "\n".join(chunks).strip() or "✅ 完成"
+        # Final update
+        response = buffer.strip() or "✅ 完成"
+        if message_id is None:
+            await self.channel.send_text(message.chat_id, response)
+        else:
+            await self.channel.edit_message(message.chat_id, message_id, response)
+        
         self.session_manager.touch(current.session_id)
-        await self.channel.send_text(message.chat_id, response)

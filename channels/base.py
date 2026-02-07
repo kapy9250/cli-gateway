@@ -64,6 +64,11 @@ class BaseChannel(ABC):
         """Send 'typing...' status"""
         pass
     
+    @abstractmethod
+    async def edit_message(self, chat_id: str, message_id: int, text: str):
+        """Edit an existing message"""
+        pass
+    
     def set_message_handler(self, handler: Callable[[IncomingMessage], Awaitable[None]]):
         """Register message callback"""
         self._message_handler = handler

@@ -91,22 +91,50 @@ class ClaudeCodeAgent(BaseAgent):
                     stderr=asyncio.subprocess.PIPE
                 )
                 
-                # Wait for completion with timeout
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=timeout
-                )
+                # Stream stdout in real-time
+                start_time = time.time()
+                stderr_task = asyncio.create_task(process.stderr.read())
                 
-                # Decode output
-                output = stdout.decode('utf-8', errors='replace')
-                error = stderr.decode('utf-8', errors='replace')
+                while True:
+                    # Check timeout
+                    if time.time() - start_time > timeout:
+                        process.kill()
+                        await process.wait()
+                        yield f"⚠️ 操作超时（{timeout}秒）"
+                        break
+                    
+                    # Read line by line
+                    try:
+                        line = await asyncio.wait_for(
+                            process.stdout.readline(),
+                            timeout=1.0
+                        )
+                    except asyncio.TimeoutError:
+                        # Check if process is still running
+                        if process.returncode is not None:
+                            break
+                        continue
+                    
+                    if not line:
+                        # EOF
+                        break
+                    
+                    # Decode and yield
+                    text = line.decode('utf-8', errors='replace')
+                    if text:
+                        yield text
                 
-                if error:
-                    logger.warning(f"Claude Code stderr: {error}")
+                # Wait for process to complete
+                await process.wait()
                 
-                # Yield output
-                if output:
-                    yield output
+                # Check stderr
+                try:
+                    stderr = await asyncio.wait_for(stderr_task, timeout=1.0)
+                    error = stderr.decode('utf-8', errors='replace')
+                    if error:
+                        logger.warning(f"Claude Code stderr: {error}")
+                except asyncio.TimeoutError:
+                    error = None
                 
                 if process.returncode != 0:
                     yield f"\n\n❌ Exit code: {process.returncode}"

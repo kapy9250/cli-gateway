@@ -59,11 +59,11 @@ class TelegramChannel(BaseChannel):
             await self.app.shutdown()
             logger.info("Telegram bot stopped")
     
-    async def send_text(self, chat_id: str, text: str):
-        """Send text message with automatic pagination"""
+    async def send_text(self, chat_id: str, text: str) -> Optional[int]:
+        """Send text message with automatic pagination. Returns message_id of first chunk."""
         if not self.app:
             logger.error("Cannot send message: bot not started")
-            return
+            return None
         
         # Clean and format
         text = self.formatter.clean(text)
@@ -72,23 +72,30 @@ class TelegramChannel(BaseChannel):
         chunks = self.formatter.split_message(text)
         
         # Send chunks
+        first_message_id = None
         for chunk in chunks:
             try:
-                await self.app.bot.send_message(
+                msg = await self.app.bot.send_message(
                     chat_id=int(chat_id),
                     text=chunk,
                     parse_mode=self.parse_mode
                 )
+                if first_message_id is None:
+                    first_message_id = msg.message_id
             except Exception as e:
                 logger.error(f"Failed to send message: {e}")
                 # Try sending without parse mode
                 try:
-                    await self.app.bot.send_message(
+                    msg = await self.app.bot.send_message(
                         chat_id=int(chat_id),
                         text=chunk
                     )
+                    if first_message_id is None:
+                        first_message_id = msg.message_id
                 except:
                     logger.error(f"Failed to send message even without parse mode")
+        
+        return first_message_id
     
     async def send_file(self, chat_id: str, filepath: str, caption: str = ""):
         """Send file"""
@@ -119,6 +126,38 @@ class TelegramChannel(BaseChannel):
             )
         except Exception as e:
             logger.error(f"Failed to send typing indicator: {e}")
+    
+    async def edit_message(self, chat_id: str, message_id: int, text: str):
+        """Edit an existing message"""
+        if not self.app:
+            logger.error("Cannot edit message: bot not started")
+            return
+        
+        # Clean and format
+        text = self.formatter.clean(text)
+        
+        # Telegram has a 4096 character limit for edits
+        if len(text) > self.max_length:
+            text = text[:self.max_length - 20] + "\n\n[输出过长，已截断]"
+        
+        try:
+            await self.app.bot.edit_message_text(
+                chat_id=int(chat_id),
+                message_id=message_id,
+                text=text,
+                parse_mode=self.parse_mode
+            )
+        except Exception as e:
+            logger.error(f"Failed to edit message: {e}")
+            # If edit fails, try without parse mode
+            try:
+                await self.app.bot.edit_message_text(
+                    chat_id=int(chat_id),
+                    message_id=message_id,
+                    text=text
+                )
+            except:
+                logger.error(f"Failed to edit message even without parse mode")
     
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming message"""
