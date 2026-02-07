@@ -12,6 +12,18 @@ from core.session import SessionManager
 
 logger = logging.getLogger(__name__)
 
+# Gateway commands (intercepted by Router)
+# All other commands (like /status, /thinking, etc.) are forwarded to the agent
+GATEWAY_COMMANDS = {
+    '/start',
+    '/help',
+    '/agent',
+    '/sessions',
+    '/kill',
+    '/current',
+    '/switch',
+}
+
 
 class Router:
     """Route incoming messages to commands or current active session."""
@@ -51,6 +63,12 @@ class Router:
         text = (message.text or "").strip()
         parts = text.split()
         command = parts[0].split("@")[0].lower()
+
+        # If not a gateway command, forward to agent
+        if command not in GATEWAY_COMMANDS:
+            logger.info(f"Forwarding command {command} to agent")
+            await self._forward_to_agent(message)
+            return
 
         if command == "/start":
             await self.channel.send_text(message.chat_id, "👋 CLI Gateway 已启动，发送 /help 查看命令。")
@@ -152,7 +170,8 @@ class Router:
             await self.channel.send_text(message.chat_id, f"🗑️ 已销毁会话 {current.session_id}")
             return
 
-        await self.channel.send_text(message.chat_id, "未知命令，发送 /help 查看支持命令。")
+        # Should never reach here due to early return for non-gateway commands
+        logger.warning(f"Unhandled gateway command: {command}")
 
     async def _forward_to_agent(self, message: IncomingMessage) -> None:
         current = self.session_manager.get_active_session(message.user_id)
