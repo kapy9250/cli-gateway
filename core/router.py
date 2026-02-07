@@ -177,6 +177,18 @@ class Router:
             await self.channel.send_text(message.chat_id, f"❌ Agent 不存在: {current.agent_name}")
             return
 
+        # If agent lost the session (e.g. after restart), recreate it
+        if agent.get_session_info(current.session_id) is None:
+            logger.info("Recovering stale session %s, creating new agent session", current.session_id)
+            self.session_manager.destroy_session(current.session_id)
+            info = await agent.create_session(user_id=message.user_id, chat_id=message.chat_id)
+            current = self.session_manager.create_session(
+                user_id=message.user_id,
+                chat_id=message.chat_id,
+                agent_name=current.agent_name,
+                session_id=info.session_id,
+            )
+
         prompt = message.text
         if message.attachments:
             names = ", ".join(att.filename for att in message.attachments)

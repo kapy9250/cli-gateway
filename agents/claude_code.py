@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import secrets
+import uuid
 import time
 from pathlib import Path
 from typing import AsyncIterator, Optional
@@ -24,7 +25,7 @@ class ClaudeCodeAgent(BaseAgent):
     async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:
         """Create new Claude Code session"""
         # Generate session ID
-        session_id = secrets.token_hex(4)  # 8 hex chars
+        session_id = str(uuid.uuid4())  # 8 hex chars
         
         # Create workspace
         work_dir = self.workspace_base / f"sess_{session_id}"

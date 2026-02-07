@@ -81,19 +81,13 @@ async def main():
             sys.exit(1)
         
         # Session Manager
-        session_manager = SessionManager(config['session'], agents)
-        
-        # Router
-        router = Router(auth, session_manager, agents)
+        session_manager = SessionManager(Path(config['session']['workspace_base']))
         
         # Telegram Channel
         telegram = TelegramChannel(config['channels']['telegram'])
         
-        # Wire up router callback
-        async def send_to_telegram(chat_id: str, text: str):
-            await telegram.send_text(chat_id, text)
-        
-        router.set_send_callback(send_to_telegram)
+        # Router
+        router = Router(auth, session_manager, agents, telegram)
         
         # Wire up message handler
         telegram.set_message_handler(router.handle_message)
