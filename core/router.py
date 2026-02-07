@@ -170,8 +170,8 @@ class Router:
             await self.channel.send_text(message.chat_id, f"🗑️ 已销毁会话 {current.session_id}")
             return
 
-        # Should never reach here due to early return for non-gateway commands
-        logger.warning(f"Unhandled gateway command: {command}")
+        # Unknown command: forward to agent
+        await self._forward_to_agent(message)
 
     async def _forward_to_agent(self, message: IncomingMessage) -> None:
         current = self.session_manager.get_active_session(message.user_id)
