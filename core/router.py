@@ -59,6 +59,30 @@ class Router:
             return
 
         text = (message.text or "").strip()
+        
+        # Support "kapybara <subcommand>" format
+        if text.lower().startswith("kapybara "):
+            # Convert to slash command format
+            subcommand = text[9:].strip()  # Remove "kapybara "
+            if subcommand:
+                # Create a modified message with "/" prefix
+                modified_message = IncomingMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    user_id=message.user_id,
+                    text=f"/{subcommand}",
+                    is_private=message.is_private,
+                    is_reply_to_bot=message.is_reply_to_bot,
+                    is_mention_bot=message.is_mention_bot,
+                    reply_to_text=message.reply_to_text,
+                    attachments=message.attachments
+                )
+                await self._handle_command(modified_message)
+                return
+            else:
+                await self.channel.send_text(message.chat_id, "用法: kapybara &lt;command&gt; [args]\n发送 'kapybara help' 查看帮助")
+                return
+        
         if text.startswith("/"):
             await self._handle_command(message)
             return
@@ -87,22 +111,27 @@ class Router:
                     [
                         "📚 可用命令：",
                         "",
+                        "💡 <b>两种格式</b>",
+                        "• 传统: <code>/model opus</code>",
+                        "• 新格式: <code>kapybara model opus</code>",
+                        "",
                         "<b>会话管理</b>",
-                        "/agent &lt;name&gt; - 切换 agent（claude/codex/gemini）",
-                        "/sessions - 列出所有会话",
-                        "/current - 查看当前会话",
-                        "/switch &lt;id&gt; - 切换到指定会话",
-                        "/kill - 销毁当前会话",
+                        "agent &lt;name&gt; - 切换 agent（claude/codex/gemini）",
+                        "sessions - 列出所有会话",
+                        "current - 查看当前会话",
+                        "switch &lt;id&gt; - 切换到指定会话",
+                        "kill - 销毁当前会话",
                         "",
                         "<b>模型配置</b>",
-                        "/model &lt;alias&gt; - 切换模型（sonnet/opus/haiku）",
-                        "/param &lt;key&gt; &lt;value&gt; - 设置参数",
-                        "/params - 查看当前配置",
-                        "/reset - 重置为默认配置",
+                        "model [&lt;alias&gt;] - 切换模型或查看可用模型",
+                        "param [&lt;key&gt; &lt;value&gt;] - 设置参数或查看可用参数",
+                        "params - 查看当前配置",
+                        "reset - 重置为默认配置",
                         "",
-                        "<b>其他</b>",
-                        "/help - 显示帮助",
-                        "/start - 启动",
+                        "<b>示例</b>",
+                        "<code>kapybara model opus</code>",
+                        "<code>kapybara param thinking high</code>",
+                        "<code>kapybara params</code>",
                     ]
                 ),
             )

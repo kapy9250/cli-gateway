@@ -480,6 +480,102 @@ async def test_session_persistence():
     print("\n✅ TEST 5 PASSED")
     return True
 
+async def test_kapybara_format():
+    """测试 kapybara 新格式命令"""
+    print("\n" + "="*80)
+    print("TEST 6: Kapybara 新格式命令测试")
+    print("="*80)
+    
+    config = {
+        "agents": {
+            "claude": {
+                "command": "claude",
+                "models": {
+                    "sonnet": "claude-sonnet-4-5",
+                    "opus": "claude-opus-4-6",
+                },
+                "default_model": "sonnet",
+                "supported_params": {
+                    "thinking": "--thinking"
+                },
+                "default_params": {
+                    "thinking": "low"
+                }
+            }
+        }
+    }
+    
+    auth = Auth([123])
+    workspace = Path("/tmp/cli-gateway-test6")
+    workspace.mkdir(parents=True, exist_ok=True)
+    session_manager = SessionManager(workspace)
+    
+    agents = {
+        "claude": MockAgent("claude", config['agents']['claude'], workspace)
+    }
+    
+    channel = FakeChannel()
+    router = Router(auth, session_manager, agents, channel, config)
+    
+    user_id = "123"
+    chat_id = "test_chat"
+    
+    # Create session
+    msg = IncomingMessage(
+        channel="telegram", chat_id=chat_id, user_id=user_id,
+        text="init", is_private=True, is_reply_to_bot=False,
+        is_mention_bot=False, attachments=[]
+    )
+    await router.handle_message(msg)
+    
+    test_sequence = [
+        ("kapybara help", "新格式帮助"),
+        ("kapybara params", "查看配置（新格式）"),
+        ("kapybara model opus", "切换模型（新格式）"),
+        ("kapybara param thinking high", "设置参数（新格式）"),
+        ("kapybara params", "确认配置更新"),
+        ("kapybara reset", "重置（新格式）"),
+        ("/params", "确认重置（传统格式）"),
+    ]
+    
+    for text, description in test_sequence:
+        print(f"\n[User → Bot] {description}")
+        print(f"> {text}")
+        print("=" * 80)
+        
+        msg = IncomingMessage(
+            channel="telegram",
+            chat_id=chat_id,
+            user_id=user_id,
+            text=text,
+            is_private=True,
+            is_reply_to_bot=False,
+            is_mention_bot=False,
+            attachments=[]
+        )
+        
+        try:
+            await router.handle_message(msg)
+        except Exception as e:
+            print(f"❌ ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+        
+        await asyncio.sleep(0.1)
+    
+    # Verify final state
+    session = session_manager.get_active_session(user_id)
+    if session.model != "sonnet":
+        print(f"❌ Expected model=sonnet after reset, got {session.model}")
+        return False
+    if session.params.get("thinking") != "low":
+        print(f"❌ Expected thinking=low after reset, got {session.params.get('thinking')}")
+        return False
+    
+    print("\n✅ TEST 6 PASSED")
+    return True
+
 async def main():
     """运行所有测试"""
     print("\n" + "="*80)
@@ -492,6 +588,7 @@ async def main():
         ("参数配置", test_param_configuration),
         ("消息发送", test_message_with_config),
         ("会话持久化", test_session_persistence),
+        ("Kapybara 新格式", test_kapybara_format),
     ]
     
     results = []
