@@ -5,16 +5,6 @@
 auth:
   allowed_users:
     - 123456789  # Replace with your Telegram user ID
-  # Optional: restrict bot usage to specific chats/groups
-  # allowed_chats:
-  #   - -1001234567890  # Telegram group chat ID
-  # Optional: per-user rate limit (requests/min). 0 = disabled
-  max_requests_per_minute: 30
-  # Optional: privileged admin users (for future admin commands)
-  admin_users:
-    - 123456789
-  # Optional: persist allowlist changes across restarts
-  state_file: "./data/auth_state.json"
 
 # ──────────── 消息通道 ────────────
 channels:
@@ -24,13 +14,36 @@ channels:
     parse_mode: "HTML"
     max_message_length: 4096
 
+  discord:
+    enabled: false
+    token: "${DISCORD_BOT_TOKEN}"  # Set via environment variable
+    max_message_length: 2000
+    allowed_guilds: []  # Empty = allow all guilds
+    members_intent: false  # Set true if you need member info
+
+  email:
+    enabled: false
+    imap_host: "imap.gmail.com"
+    imap_port: 993
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    username: "${EMAIL_USERNAME}"
+    password: "${EMAIL_PASSWORD}"
+    poll_interval: 30  # seconds between inbox checks
+    allowed_senders: []  # Email whitelist
+
+# ──────────── Channel Rules ────────────
+# Rules files in rules/ directory are auto-loaded per channel.
+# They inject context into agent sessions so the AI knows
+# which platform it's serving (telegram.md, discord.md, email.md).
+
 # ──────────── CLI Agents ────────────
 agents:
   claude:
     enabled: true
     display_name: "Claude Code"
     command: "claude"
-    args_template: ["-p", "{prompt}", "--session-id", "{session_id}", "--output-format", "text", "--dangerously-skip-permissions"]
+    args_template: ["-p", "{prompt}", "--session-id", "{session_id}", "--output-format", "text"]
     interactive: false
     timeout: 300
     max_concurrent_sessions: 3
@@ -52,7 +65,7 @@ agents:
     enabled: false
     display_name: "GPT Codex"
     command: "codex"
-    args_template: ["--prompt", "{prompt}", "--session", "{session_id}", "-a", "never"]
+    args_template: ["--prompt", "{prompt}", "--session", "{session_id}"]
     interactive: false
     timeout: 300
     max_concurrent_sessions: 3
@@ -69,7 +82,7 @@ agents:
     enabled: false
     display_name: "Gemini CLI"
     command: "gemini-cli"
-    args_template: ["-p", "{prompt}", "--yolo"]
+    args_template: ["-p", "{prompt}"]
     interactive: false
     timeout: 300
     max_concurrent_sessions: 3
@@ -81,7 +94,25 @@ agents:
       temperature: "--temp"
     default_params: {}
   
-  # duplicate codex/gemini block removed
+  codex:
+    enabled: false
+    display_name: "Codex"
+    command: "codex"
+    args_template: ["--quiet", "{prompt}", "--approval-mode", "full-auto"]
+    interactive: false
+    timeout: 300
+    max_concurrent_sessions: 2
+    env: {}
+  
+  gemini:
+    enabled: false
+    display_name: "Gemini CLI"
+    command: "gemini"
+    args_template: ["-p", "{prompt}"]
+    interactive: false
+    timeout: 300
+    max_concurrent_sessions: 2
+    env: {}
 
 # ──────────── Watchdog ────────────
 watchdog:

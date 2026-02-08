@@ -4,7 +4,6 @@ Gemini CLI agent adapter
 import asyncio
 import logging
 import os
-import signal
 import uuid
 import time
 from pathlib import Path
@@ -24,8 +23,26 @@ class GeminiAgent(BaseAgent):
     
     async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:
         """Create new Gemini session"""
-        session = self.create_managed_session(user_id)
-        logger.info(f"Created Gemini session {session.session_id} at {session.work_dir}")
+        # Generate session ID
+        session_id = str(uuid.uuid4())
+        
+        # Create workspace with standard directory structure
+        work_dir = self.workspace_base / f"sess_{session_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        self.init_workspace(work_dir)
+        
+        session = SessionInfo(
+            session_id=session_id,
+            agent_name=self.name,
+            user_id=user_id,
+            work_dir=work_dir,
+            created_at=time.time(),
+            last_active=time.time()
+        )
+        
+        self.sessions[session_id] = session
+        
+        logger.info(f"Created Gemini session {session_id} at {work_dir}")
         return session
     
     async def send_message(self, session_id: str, message: str, model: str = None, params: dict = None) -> AsyncIterator[str]:
@@ -41,15 +58,7 @@ class GeminiAgent(BaseAgent):
         session = self.sessions.get(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
-
-        lock = self._session_locks.get(session_id)
-        if not lock:
-            raise ValueError(f"Session lock for {session_id} not found")
-        if lock.locked():
-            yield "⚠️ 会话正忙，请稍后重试或先取消当前任务。"
-            return
-        await lock.acquire()
-
+        
         # Mark as busy
         session.is_busy = True
         session.last_active = time.time()
@@ -90,13 +99,7 @@ class GeminiAgent(BaseAgent):
             # Timeout
             timeout = self.config.get('timeout', 300)
             
-            logger.info(
-                "Executing command=%s session=%s args_count=%d prompt_len=%d",
-                command,
-                session_id,
-                len(args),
-                len(message)
-            )
+            logger.info(f"Executing: {command} {' '.join(args)}")
             
             # Execute
             try:
@@ -106,10 +109,8 @@ class GeminiAgent(BaseAgent):
                     cwd=str(session.work_dir),
                     env=env,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    start_new_session=True
+                    stderr=asyncio.subprocess.PIPE
                 )
-                self.set_active_process(session_id, process)
                 
                 # Stream stdout in real-time
                 start_time = time.time()
@@ -118,10 +119,7 @@ class GeminiAgent(BaseAgent):
                 while True:
                     # Check timeout
                     if time.time() - start_time > timeout:
-                        try:
-                            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                        except Exception:
-                            process.kill()
+                        process.kill()
                         await process.wait()
                         yield f"⚠️ 操作超时（{timeout}秒）"
                         break
@@ -167,16 +165,12 @@ class GeminiAgent(BaseAgent):
             except asyncio.TimeoutError:
                 logger.error(f"Gemini timeout after {timeout}s")
                 yield f"⚠️ 操作超时（{timeout}秒）"
-                # Try to kill process group
+                # Try to kill process
                 try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    process.kill()
                     await process.wait()
-                except Exception:
-                    try:
-                        process.kill()
-                        await process.wait()
-                    except Exception:
-                        pass
+                except:
+                    pass
             
             except FileNotFoundError:
                 error_msg = f"❌ Gemini CLI 未安装或未找到命令: {command}"
@@ -189,20 +183,22 @@ class GeminiAgent(BaseAgent):
                 yield error_msg
         
         finally:
-            self.clear_active_process(session_id)
             session.is_busy = False
             session.last_active = time.time()
-            if lock.locked():
-                lock.release()
     
     async def cancel(self, session_id: str):
-        """Cancel current operation by terminating active subprocess"""
-        logger.info(f"Cancelling session {session_id}")
-        await self.cancel_active_process(session_id)
+        """Cancel current operation (not implemented)"""
+        logger.warning(f"Cancel not implemented for session {session_id}")
     
     async def destroy_session(self, session_id: str):
         """Destroy session"""
-        session = self.destroy_managed_session(session_id)
+        session = self.sessions.get(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        
+        # Remove from sessions dict
+        del self.sessions[session_id]
+        
         logger.info(f"Destroyed session {session_id} (workspace retained at {session.work_dir})")
     
     def health_check(self, session_id: str) -> dict:

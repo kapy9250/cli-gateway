@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-import time
-import asyncio
-import shutil
 from typing import Dict
 
-from agents.base import BaseAgent
+import shutil
+from agents.base import BaseAgent, SessionInfo
 from channels.base import BaseChannel, IncomingMessage
 from core.auth import Auth
+from core.rules import RulesLoader
 from core.session import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -48,12 +47,13 @@ class Router:
         self.agents = agents
         self.channel = channel
         self.config = config
+        self.rules_loader = RulesLoader()
         self.default_agent = next(iter(agents.keys()), "claude")
 
     async def handle_message(self, message: IncomingMessage) -> None:
         """Handle one normalized incoming message."""
         try:
-            if not self.auth.check(int(message.user_id), int(message.chat_id)):
+            if not self.auth.check(int(message.user_id)):
                 await self.channel.send_text(message.chat_id, "⚠️ 未授权访问")
                 return
         except ValueError:
@@ -64,65 +64,33 @@ class Router:
         text = (message.text or "").strip()
         
         # Support "kapybara <subcommand>" format
-        normalized = self._normalize_kapybara_command(message, text)
-        if normalized is not None:
-            if not normalized.text:
-                await self.channel.send_text(message.chat_id, "用法: kapybara &lt;command&gt; [args]\n发送 'kapybara help' 查看帮助")
+        if text.lower().startswith("kapybara "):
+            # Convert to slash command format
+            subcommand = text[9:].strip()  # Remove "kapybara "
+            if subcommand:
+                # Create a modified message with "/" prefix
+                modified_message = IncomingMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    user_id=message.user_id,
+                    text=f"/{subcommand}",
+                    is_private=message.is_private,
+                    is_reply_to_bot=message.is_reply_to_bot,
+                    is_mention_bot=message.is_mention_bot,
+                    reply_to_text=message.reply_to_text,
+                    attachments=message.attachments
+                )
+                await self._handle_command(modified_message)
+                return
             else:
-                await self._handle_command(normalized)
-            return
+                await self.channel.send_text(message.chat_id, "用法: kapybara &lt;command&gt; [args]\n发送 'kapybara help' 查看帮助")
+                return
         
         if text.startswith("/"):
             await self._handle_command(message)
             return
 
         await self._forward_to_agent(message)
-
-    def _normalize_kapybara_command(self, message: IncomingMessage, text: str) -> IncomingMessage | None:
-        """Convert 'kapybara xxx' to '/xxx' command form."""
-        if not text:
-            return None
-        parts = text.split(maxsplit=1)
-        if not parts or parts[0].lower() != "kapybara":
-            return None
-        subcommand = parts[1].strip() if len(parts) > 1 else ""
-        if not subcommand:
-            return IncomingMessage(
-                channel=message.channel,
-                chat_id=message.chat_id,
-                user_id=message.user_id,
-                text="",
-                is_private=message.is_private,
-                is_reply_to_bot=message.is_reply_to_bot,
-                is_mention_bot=message.is_mention_bot,
-                reply_to_text=message.reply_to_text,
-                attachments=message.attachments,
-            )
-        return IncomingMessage(
-            channel=message.channel,
-            chat_id=message.chat_id,
-            user_id=message.user_id,
-            text=f"/{subcommand}",
-            is_private=message.is_private,
-            is_reply_to_bot=message.is_reply_to_bot,
-            is_mention_bot=message.is_mention_bot,
-            reply_to_text=message.reply_to_text,
-            attachments=message.attachments,
-        )
-
-    def _create_session_for_agent(self, message: IncomingMessage, agent_name: str, session_id: str):
-        """Persist a newly created runtime session with default model/params."""
-        agent_config = self.config['agents'].get(agent_name, {})
-        default_model = agent_config.get('default_model')
-        default_params = agent_config.get('default_params', {}).copy()
-        return self.session_manager.create_session(
-            user_id=message.user_id,
-            chat_id=message.chat_id,
-            agent_name=agent_name,
-            session_id=session_id,
-            model=default_model,
-            params=default_params,
-        )
 
     async def _handle_command(self, message: IncomingMessage) -> None:
         text = (message.text or "").strip()
@@ -188,7 +156,19 @@ class Router:
 
             info = await agent.create_session(user_id=message.user_id, chat_id=message.chat_id)
             
-            self._create_session_for_agent(message, agent_name, info.session_id)
+            # Get default model and params from config
+            agent_config = self.config['agents'].get(agent_name, {})
+            default_model = agent_config.get('default_model')
+            default_params = agent_config.get('default_params', {}).copy()
+            
+            self.session_manager.create_session(
+                user_id=message.user_id,
+                chat_id=message.chat_id,
+                agent_name=agent_name,
+                session_id=info.session_id,
+                model=default_model,
+                params=default_params,
+            )
             await self.channel.send_text(
                 message.chat_id,
                 f"✅ 已切换到 {agent_name}，当前会话: {info.session_id}",
@@ -376,19 +356,6 @@ class Router:
         # Unknown command: forward to agent
         await self._forward_to_agent(message)
 
-    async def _safe_edit_message(self, chat_id: str, message_id: int, text: str) -> bool:
-        """Edit message with retry/backoff to tolerate Telegram rate limits/transient errors."""
-        delay = 0.4
-        for _ in range(3):
-            try:
-                await self.channel.edit_message(chat_id, message_id, text)
-                return True
-            except Exception as e:
-                logger.warning("edit_message failed (retrying): %s", e)
-                await asyncio.sleep(delay)
-                delay *= 2
-        return False
-
     async def _forward_to_agent(self, message: IncomingMessage) -> None:
         current = self.session_manager.get_active_session(message.user_id)
 
@@ -401,7 +368,19 @@ class Router:
 
             info = await agent.create_session(user_id=message.user_id, chat_id=message.chat_id)
             
-            current = self._create_session_for_agent(message, agent_name, info.session_id)
+            # Get default model and params from config
+            agent_config = self.config['agents'].get(agent_name, {})
+            default_model = agent_config.get('default_model')
+            default_params = agent_config.get('default_params', {}).copy()
+            
+            current = self.session_manager.create_session(
+                user_id=message.user_id,
+                chat_id=message.chat_id,
+                agent_name=agent_name,
+                session_id=info.session_id,
+                model=default_model,
+                params=default_params,
+            )
 
         agent = self.agents.get(current.agent_name)
         if agent is None:
@@ -411,19 +390,11 @@ class Router:
         # If agent lost the session (e.g. after restart), recreate it
         if agent.get_session_info(current.session_id) is None:
             logger.info("Recovering stale session %s, creating new agent session", current.session_id)
-
+            
             # Preserve model and params from old session
             old_model = current.model
             old_params = current.params.copy() if current.params else {}
-
-            # Best-effort cleanup for stale workspace directory
-            try:
-                stale_workdir = agent.workspace_base / f"sess_{current.session_id}"
-                if stale_workdir.exists():
-                    shutil.rmtree(stale_workdir, ignore_errors=True)
-            except Exception:
-                pass
-
+            
             self.session_manager.destroy_session(current.session_id)
             info = await agent.create_session(user_id=message.user_id, chat_id=message.chat_id)
             current = self.session_manager.create_session(
@@ -435,19 +406,36 @@ class Router:
                 params=old_params,
             )
 
+        # Inject channel rules as context prefix for new sessions
+        channel_context = self.rules_loader.get_system_prompt(message.channel)
+        
         prompt = message.text
         if message.attachments:
-            # Build attachment info with file paths
+            # Move attachments to session's user/ directory
+            user_dir = BaseAgent.get_user_upload_dir(agent.sessions[current.session_id].work_dir)
             att_lines = []
             for att in message.attachments:
-                att_lines.append(f"- {att.filename} ({att.mime_type}, {att.size_bytes} bytes)")
-                att_lines.append(f"  Path: {att.filepath}")
+                # Copy attachment to session workspace
+                safe_name = Path(att.filename).name  # Sanitize: prevent path traversal
+                dest = BaseAgent.safe_filename(user_dir, safe_name)
+                try:
+                    shutil.copy2(att.filepath, dest)
+                    att_lines.append(f"- {att.filename} ({att.mime_type}, {att.size_bytes} bytes)")
+                    att_lines.append(f"  Path: {dest}")
+                except Exception as e:
+                    logger.warning(f"Failed to copy attachment {att.filename}: {e}")
+                    att_lines.append(f"- {att.filename} ({att.mime_type}, {att.size_bytes} bytes)")
+                    att_lines.append(f"  Path: {att.filepath}")
             
             att_info = "\n".join(att_lines)
             if prompt:
                 prompt = f"{prompt}\n\n附件:\n{att_info}"
             else:
                 prompt = f"附件:\n{att_info}"
+
+        # Prepend channel context to the first message of a session
+        if channel_context and prompt:
+            prompt = f"{channel_context}{prompt}"
 
         await self.channel.send_typing(message.chat_id)
 
@@ -468,16 +456,15 @@ class Router:
                 buffer += chunk
                 
                 # Update message periodically to avoid API rate limits
+                import time
                 current_time = time.time()
                 if current_time - last_update_time >= update_interval:
                     if message_id is None:
                         # Send initial message
                         message_id = await self.channel.send_text(message.chat_id, buffer or "⏳ 处理中...")
                     else:
-                        # Edit existing message with retry; fallback to new message if needed
-                        ok = await self._safe_edit_message(message.chat_id, message_id, buffer)
-                        if not ok:
-                            message_id = await self.channel.send_text(message.chat_id, buffer)
+                        # Edit existing message
+                        await self.channel.edit_message(message.chat_id, message_id, buffer)
                     last_update_time = current_time
 
         # Final update
@@ -485,8 +472,6 @@ class Router:
         if message_id is None:
             await self.channel.send_text(message.chat_id, response)
         else:
-            ok = await self._safe_edit_message(message.chat_id, message_id, response)
-            if not ok:
-                await self.channel.send_text(message.chat_id, response)
+            await self.channel.edit_message(message.chat_id, message_id, response)
         
         self.session_manager.touch(current.session_id)

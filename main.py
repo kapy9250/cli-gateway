@@ -16,6 +16,8 @@ from agents.claude_code import ClaudeCodeAgent
 from agents.codex_cli import CodexAgent
 from agents.gemini_cli import GeminiAgent
 from channels.telegram import TelegramChannel
+from channels.discord import DiscordChannel
+from channels.email import EmailChannel
 
 
 # Configure logging
@@ -61,13 +63,7 @@ async def main():
     # Initialize components
     try:
         # Auth
-        auth = Auth(
-            config['auth']['allowed_users'],
-            config['auth'].get('allowed_chats'),
-            config['auth'].get('max_requests_per_minute', 0),
-            config['auth'].get('state_file'),
-            config['auth'].get('admin_users')
-        )
+        auth = Auth(config['auth']['allowed_users'])
         
         # Agents
         agents = {}
@@ -105,90 +101,75 @@ async def main():
             sys.exit(1)
         
         # Session Manager
-        session_cfg = config.get('session', {})
-        session_manager = SessionManager(
-            Path(config['session']['workspace_base']),
-            session_cfg.get('max_sessions_per_user', 5),
-            session_cfg.get('cleanup_inactive_after_hours', 24)
-        )
+        session_manager = SessionManager(Path(config['session']['workspace_base']))
+        
+        # Channels
+        channels = []
         
         # Telegram Channel
-        telegram = TelegramChannel(config['channels']['telegram'])
+        if config['channels'].get('telegram', {}).get('enabled', True):
+            telegram = TelegramChannel(config['channels']['telegram'])
+            channels.append(('Telegram', telegram))
         
-        # Router
-        router = Router(auth, session_manager, agents, telegram, config)
+        # Discord Channel
+        if config['channels'].get('discord', {}).get('enabled', False):
+            discord_channel = DiscordChannel(config['channels']['discord'])
+            channels.append(('Discord', discord_channel))
         
-        # Wire up message handler
-        telegram.set_message_handler(router.handle_message)
+        # Email Channel
+        if config['channels'].get('email', {}).get('enabled', False):
+            email_channel = EmailChannel(config['channels']['email'])
+            channels.append(('Email', email_channel))
+        
+        if not channels:
+            logger.error("❌ No channels enabled")
+            sys.exit(1)
+        
+        # Create Router and wire up each channel
+        for channel_name, channel in channels:
+            router = Router(auth, session_manager, agents, channel, config)
+            channel.set_message_handler(router.handle_message)
         
         logger.info("✅ All components initialized")
         
-        # Print startup banner (auto-width, no overflow)
-        banner_lines = [
-            "CLI Gateway v0.1.0",
-            "Channels:",
-            "  ✅ Telegram",
-            "Agents:",
-        ]
-        banner_lines.extend([f"  ✅ {name.capitalize()}" for name in agents.keys()])
-        banner_lines.append(f"Authorized users: {len(auth.allowed_users)}")
-        banner_lines.append(f"Workspace: {workspace_base}")
-
-        inner_width = max(len(line) for line in banner_lines) + 2
-        top = "╔" + "═" * inner_width + "╗"
-        sep = "╠" + "═" * inner_width + "╣"
-        bottom = "╚" + "═" * inner_width + "╝"
-        print(top)
-        for i, line in enumerate(banner_lines):
-            print(f"║ {line.ljust(inner_width - 1)}║")
-            if i == 0:
-                print(sep)
-        print(bottom)
+        # Print startup banner
+        print("╔════════════════════════════════════════╗")
+        print("║         CLI Gateway v0.1.0             ║")
+        print("╠════════════════════════════════════════╣")
+        print("║ Channels:                              ║")
+        for channel_name, _ in channels:
+            print(f"║   ✅ {channel_name:30s}       ║")
+        print("║ Agents:                                ║")
+        for name in agents.keys():
+            print(f"║   ✅ {name.capitalize():30s}       ║")
+        print(f"║ Authorized users: {len(auth.allowed_users):2d}                  ║")
+        print(f"║ Workspace: {str(workspace_base):24s}║")
+        print("╚════════════════════════════════════════╝")
         
-        # Start Telegram
-        await telegram.start()
+        # Start all channels
+        for channel_name, channel in channels:
+            await channel.start()
+            logger.info(f"✅ {channel_name} channel started")
         logger.info("🚀 CLI Gateway is running")
         
         # Wait for shutdown signal
         shutdown_event = asyncio.Event()
-        loop = asyncio.get_running_loop()
-
-        def _on_shutdown_signal(sig_name: str):
-            logger.info("Received signal %s, shutting down...", sig_name)
+        
+        def signal_handler(sig, frame):
+            logger.info(f"Received signal {sig}, shutting down...")
             shutdown_event.set()
-
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, _on_shutdown_signal, sig.name)
-            except NotImplementedError:
-                # Fallback for platforms without add_signal_handler support
-                signal.signal(sig, lambda *_: shutdown_event.set())
-
-        async def _cleanup_task():
-            while not shutdown_event.is_set():
-                try:
-                    session_manager.cleanup_inactive_sessions()
-                except Exception as e:
-                    logger.warning("Inactive session cleanup failed: %s", e)
-                try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=300)
-                except asyncio.TimeoutError:
-                    continue
-
-        cleanup_task = asyncio.create_task(_cleanup_task())
-
+        
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
         # Keep running
         await shutdown_event.wait()
-
-        cleanup_task.cancel()
-        try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            pass
-
-        # Shutdown
+        
+        # Shutdown all channels
         logger.info("Shutting down...")
-        await telegram.stop()
+        for channel_name, channel in channels:
+            await channel.stop()
+            logger.info(f"✅ {channel_name} stopped")
         logger.info("✅ Shutdown complete")
     
     except Exception as e:
