@@ -13,6 +13,7 @@ Before doing anything else:
 2. Read `USER.md` — this is who you're helping
 3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
 4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`
+5. **Read `GROUP_CHAT_RULES.md`** ⚠️ CRITICAL - Apply when in multi-AI Discord/Telegram groups
 
 Don't ask permission. Just do it.
 
@@ -73,6 +74,11 @@ In group chats where you receive every message, be **smart about when to contrib
 - Something witty/funny fits naturally
 - Correcting important misinformation
 - Summarizing when asked
+
+**Multi-Agent Chat Rules:**
+1. **Mandatory Reply:** If you are @mentioned, you **must** answer the question.
+2. **Tag the Asker:** When replying, you **must** @mention the person/agent who asked.
+3. **Continuous Tagging:** If your answer or question is split into multiple messages, **each message** must include the @mention of the target person/agent.
 
 **Stay silent (HEARTBEAT_OK) when:**
 - It's just casual banter between humans

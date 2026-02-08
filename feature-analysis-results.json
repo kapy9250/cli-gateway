@@ -1,0 +1,68 @@
+{
+  "analysisDate": "2026-01-31T15:34:45.051Z",
+  "totalOpportunities": 214,
+  "tradingDensityAnalysis": {
+    "medianDensity": 15.375,
+    "quartiles": {
+      "q1": 7.25,
+      "median": 15.375,
+      "q3": 24.041666666666668
+    },
+    "byQuartile": {
+      "b1": {
+        "count": 53,
+        "winRate": "86.79",
+        "avgRoi": "395.98"
+      },
+      "b2": {
+        "count": 54,
+        "winRate": "100.00",
+        "avgRoi": "665.73"
+      },
+      "b3": {
+        "count": 53,
+        "winRate": "100.00",
+        "avgRoi": "707.04"
+      },
+      "b4": {
+        "count": 54,
+        "winRate": "100.00",
+        "avgRoi": "727.91"
+      }
+    }
+  },
+  "pricePathAnalysis": {
+    "earlyBreakout": {
+      "count": 200,
+      "winRate": "99.50",
+      "avgRoi": "651.68"
+    },
+    "noEarlyBreakout": {
+      "count": 14,
+      "winRate": "57.14",
+      "avgRoi": "241.49"
+    },
+    "falseBreakout": {
+      "count": 194,
+      "winRate": "98.97",
+      "avgRoi": "662.99"
+    },
+    "noFalseBreakout": {
+      "count": 20,
+      "winRate": "75.00",
+      "avgRoi": "254.79"
+    }
+  },
+  "combinedAnalysis": {
+    "highDensityNoFalseBreakout": {
+      "count": 4,
+      "winRate": "100.00",
+      "avgRoi": "483.38"
+    }
+  },
+  "exitDistribution": {
+    "target": 207,
+    "force": 5,
+    "165min": 2
+  }
+}

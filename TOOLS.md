@@ -4,6 +4,16 @@ Skills define *how* tools work. This file is for *your* specifics — the stuff 
 
 ## What Goes Here
 
+### Environment gotchas (2026-02-02)
+- Some exec contexts run `/bin/sh` (dash). `set -o pipefail` fails. Prefer `bash -lc '...'` or bash shebang.
+- `python`/`python3` may not be installed; use Node (`node -e` or JS scripts) for log parsing.
+
+### Polymarket CLOB gotchas (2026-02-02)
+- `/book` / `getOrderBook()` can return a "ghost book" (bestBid=0.01, bestAsk=0.99) even when frontend shows normal prices.
+- Treat this as `SENTINEL_BOOK`/data issue, not necessarily "market restricted".
+- For price decisions, prefer `/price` (buy/sell) + `/midpoint` over `/book` top-of-book.
+- In `@polymarket/clob-client`, `getPrice(tokenId, side)` expects side to be lowercase `'buy'/'sell'`.
+
 Things like:
 - Camera names and locations
 - SSH hosts and aliases  
