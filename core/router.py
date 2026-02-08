@@ -52,12 +52,8 @@ class Router:
 
     async def handle_message(self, message: IncomingMessage) -> None:
         """Handle one normalized incoming message."""
-        try:
-            if not self.auth.check(int(message.user_id)):
-                await self.channel.send_text(message.chat_id, "⚠️ 未授权访问")
-                return
-        except ValueError:
-            logger.warning("Invalid user id: %s", message.user_id)
+        if not self.auth.check(str(message.user_id), channel=message.channel):
+            logger.warning("Unauthorized access: user_id=%s channel=%s", message.user_id, message.channel)
             await self.channel.send_text(message.chat_id, "⚠️ 未授权访问")
             return
 
