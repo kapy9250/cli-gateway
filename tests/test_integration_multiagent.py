@@ -106,7 +106,7 @@ async def test_multi_agent_workflow():
     }
     
     # 初始化组件
-    auth = Auth([123])
+    auth = Auth(channel_allowed={"telegram": ["123"]})
     workspace = Path("/tmp/integration-test")
     workspace.mkdir(parents=True, exist_ok=True)
     session_manager = SessionManager(workspace)

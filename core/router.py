@@ -406,6 +406,24 @@ class Router:
                 params=old_params,
             )
 
+        # Check if session is busy (previous request still running)
+        session_info = agent.get_session_info(current.session_id)
+        if session_info and session_info.is_busy:
+            if hasattr(agent, 'is_process_alive') and agent.is_process_alive(current.session_id):
+                # Process is genuinely running — ask user to wait
+                await self.channel.send_text(
+                    message.chat_id,
+                    "⏳ 上一个请求还在处理中，请稍后再试"
+                )
+                return
+            else:
+                # Process is dead but is_busy wasn't cleared — orphan cleanup
+                logger.warning("Session %s marked busy but process is dead, cleaning up", current.session_id)
+                if hasattr(agent, 'kill_process'):
+                    await agent.kill_process(current.session_id)
+                else:
+                    session_info.is_busy = False
+
         # Inject channel rules as context prefix for new sessions
         channel_context = self.rules_loader.get_system_prompt(message.channel)
         
@@ -439,39 +457,51 @@ class Router:
 
         await self.channel.send_typing(message.chat_id)
 
-        # Stream output with progressive updates
-        buffer = ""
-        message_id = None
-        last_update_time = 0
-        update_interval = 2.0  # Update every 2 seconds
-        
-        # Pass model and params from session
-        async for chunk in agent.send_message(
-            current.session_id, 
-            prompt,
-            model=current.model,
-            params=current.params
-        ):
-            if chunk:
-                buffer += chunk
-                
-                # Update message periodically to avoid API rate limits
-                import time
-                current_time = time.time()
-                if current_time - last_update_time >= update_interval:
-                    if message_id is None:
-                        # Send initial message
-                        message_id = await self.channel.send_text(message.chat_id, buffer or "⏳ 处理中...")
-                    else:
-                        # Edit existing message
-                        await self.channel.edit_message(message.chat_id, message_id, buffer)
-                    last_update_time = current_time
+        # Collect response from agent
+        use_streaming = getattr(self.channel, 'supports_streaming', True)
 
-        # Final update
-        response = buffer.strip() or "✅ 完成"
-        if message_id is None:
-            await self.channel.send_text(message.chat_id, response)
+        buffer = ""
+        # Pass model and params from session
+        if use_streaming:
+            # Streaming mode: progressive updates (Telegram, Discord)
+            import time as _time
+            message_id = None
+            last_update_time = 0
+            update_interval = 2.0
+
+            async for chunk in agent.send_message(
+                current.session_id,
+                prompt,
+                model=current.model,
+                params=current.params
+            ):
+                if chunk:
+                    buffer += chunk
+                    current_time = _time.time()
+                    if current_time - last_update_time >= update_interval:
+                        if message_id is None:
+                            message_id = await self.channel.send_text(message.chat_id, buffer or "⏳ 处理中...")
+                        else:
+                            await self.channel.edit_message(message.chat_id, message_id, buffer)
+                        last_update_time = current_time
+
+            response = buffer.strip() or "✅ 完成"
+            if message_id is None:
+                await self.channel.send_text(message.chat_id, response)
+            else:
+                await self.channel.edit_message(message.chat_id, message_id, response)
         else:
-            await self.channel.edit_message(message.chat_id, message_id, response)
+            # Batch mode: collect full response, send once (Email)
+            async for chunk in agent.send_message(
+                current.session_id,
+                prompt,
+                model=current.model,
+                params=current.params
+            ):
+                if chunk:
+                    buffer += chunk
+
+            response = buffer.strip() or "✅ 完成"
+            await self.channel.send_text(message.chat_id, response)
         
         self.session_manager.touch(current.session_id)

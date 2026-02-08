@@ -5,6 +5,7 @@ import asyncio
 import email
 import email.header
 import email.utils
+import html
 import imaplib
 import logging
 import os
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 class EmailChannel(BaseChannel):
     """Email channel via IMAP (receive) + SMTP (send)"""
 
+    # Indicate that email does NOT support real-time message editing.
+    # The Router should collect the full response before calling send_text.
+    supports_streaming = False
+
     def __init__(self, config: dict):
         super().__init__(config)
 
@@ -46,16 +51,18 @@ class EmailChannel(BaseChannel):
         # Polling
         self.poll_interval = config.get('poll_interval', 30)
 
-        # Auth
-        self.allowed_senders: Set[str] = set(
-            s.lower() for s in config.get('allowed_senders', [])
+        # Pre-filter: skip unauthorized senders at IMAP level to avoid sending
+        # reply emails to spam. The Router also does auth.check() but that would
+        # trigger a reply email which is undesirable for unknown senders.
+        self._allowed_senders: Set[str] = set(
+            str(s).lower() for s in config.get('allowed_users', [])
         )
 
         # State
         self._poll_task: Optional[asyncio.Task] = None
         self._running = False
         self._seen_uids: Set[str] = set()
-        # Map chat_id (sender email) -> last message-id for threading
+        # Map chat_id (sender email) -> threading info + original body
         self._thread_refs: dict = {}
 
         logger.info("EmailChannel initialized")
@@ -79,27 +86,55 @@ class EmailChannel(BaseChannel):
 
     async def send_text(self, chat_id: str, text: str) -> Optional[int]:
         """
-        Send email reply.
+        Send email reply with quoted original.
         chat_id = recipient email address
         """
         try:
             msg = MIMEMultipart('alternative')
             msg['From'] = self.username
             msg['To'] = chat_id
-            msg['Subject'] = "Re: CLI Gateway"
 
-            # Add threading headers if available
+            # Use original subject for threading
             refs = self._thread_refs.get(chat_id)
+            if refs and refs.get('subject'):
+                subject = refs['subject']
+                if not subject.lower().startswith('re:'):
+                    subject = f"Re: {subject}"
+                msg['Subject'] = subject
+            else:
+                msg['Subject'] = "Re: CLI Gateway"
+
+            # Add threading headers
             if refs:
                 msg['In-Reply-To'] = refs.get('message_id', '')
                 msg['References'] = refs.get('references', '')
 
-            # Plain text part
-            msg.attach(MIMEText(text, 'plain', 'utf-8'))
+            # Build body with quoted original
+            original_body = refs.get('original_body', '') if refs else ''
+            plain_body = text
+            html_body = html.escape(text).replace('\n', '<br>\n')
 
-            # HTML part (basic formatting)
-            html_text = text.replace('\n', '<br>\n')
-            msg.attach(MIMEText(f"<html><body>{html_text}</body></html>", 'html', 'utf-8'))
+            if original_body:
+                # Plain text: quote with >
+                quoted_lines = '\n'.join(
+                    f'> {line}' for line in original_body.split('\n')
+                )
+                plain_body = f"{text}\n\n---\n{quoted_lines}"
+
+                # HTML: styled blockquote
+                quoted_html = html.escape(original_body).replace('\n', '<br>\n')
+                html_body = (
+                    f"{html.escape(text).replace(chr(10), '<br>' + chr(10))}"
+                    f"<br><br><hr>"
+                    f'<blockquote style="margin:10px 0;padding:10px;'
+                    f'border-left:3px solid #ccc;color:#555">'
+                    f"{quoted_html}</blockquote>"
+                )
+
+            msg.attach(MIMEText(plain_body, 'plain', 'utf-8'))
+            msg.attach(MIMEText(
+                f"<html><body>{html_body}</body></html>", 'html', 'utf-8'
+            ))
 
             await asyncio.to_thread(self._smtp_send, chat_id, msg)
             logger.info(f"Email sent to {chat_id}")
@@ -143,8 +178,8 @@ class EmailChannel(BaseChannel):
         pass
 
     async def edit_message(self, chat_id: str, message_id: int, text: str):
-        """Cannot edit emails - send a new one instead"""
-        await self.send_text(chat_id, text)
+        """Email cannot edit - no-op (Router should use batch mode)"""
+        pass
 
     def _smtp_send(self, recipient: str, msg):
         """Synchronous SMTP send (called via asyncio.to_thread)"""
@@ -219,9 +254,9 @@ class EmailChannel(BaseChannel):
                 sender_name, sender_addr = email.utils.parseaddr(from_header)
                 sender_addr = sender_addr.lower()
 
-                # Auth check
-                if self.allowed_senders and sender_addr not in self.allowed_senders:
-                    logger.warning(f"Unauthorized email from: {sender_addr}")
+                # Pre-filter: skip unauthorized senders silently
+                if self._allowed_senders and sender_addr not in self._allowed_senders:
+                    logger.warning("Ignoring email from unauthorized sender: %s", sender_addr)
                     self._seen_uids.add(uid_str)
                     continue
 
@@ -234,13 +269,14 @@ class EmailChannel(BaseChannel):
                 # Parse attachments
                 attachments = self._extract_attachments(msg)
 
-                # Store threading info
+                # Store threading info + original body for quoting
                 message_id = msg.get('Message-ID', '')
                 references = msg.get('References', '')
                 self._thread_refs[sender_addr] = {
                     'message_id': message_id,
                     'references': f"{references} {message_id}".strip(),
                     'subject': subject,
+                    'original_body': body,
                 }
 
                 # Build text (subject + body)
@@ -307,8 +343,8 @@ class EmailChannel(BaseChannel):
                     charset = part.get_content_charset() or 'utf-8'
                     # Basic HTML stripping
                     import re
-                    html = payload.decode(charset, errors='replace')
-                    return re.sub(r'<[^>]+>', '', html).strip()
+                    text = payload.decode(charset, errors='replace')
+                    return re.sub(r'<[^>]+>', '', text).strip()
         else:
             payload = msg.get_payload(decode=True)
             if payload:

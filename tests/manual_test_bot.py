@@ -100,7 +100,7 @@ async def test_basic_commands():
         }
     }
     
-    auth = Auth([123])
+    auth = Auth(channel_allowed={"telegram": ["123"]})
     workspace = Path("/tmp/cli-gateway-test")
     workspace.mkdir(parents=True, exist_ok=True)
     session_manager = SessionManager(workspace)
@@ -176,7 +176,7 @@ async def test_model_switching():
         }
     }
     
-    auth = Auth([123])
+    auth = Auth(channel_allowed={"telegram": ["123"]})
     workspace = Path("/tmp/cli-gateway-test2")
     workspace.mkdir(parents=True, exist_ok=True)
     session_manager = SessionManager(workspace)
@@ -265,7 +265,7 @@ async def test_param_configuration():
         }
     }
     
-    auth = Auth([123])
+    auth = Auth(channel_allowed={"telegram": ["123"]})
     workspace = Path("/tmp/cli-gateway-test3")
     workspace.mkdir(parents=True, exist_ok=True)
     session_manager = SessionManager(workspace)
@@ -352,7 +352,7 @@ async def test_message_with_config():
         }
     }
     
-    auth = Auth([123])
+    auth = Auth(channel_allowed={"telegram": ["123"]})
     workspace = Path("/tmp/cli-gateway-test4")
     workspace.mkdir(parents=True, exist_ok=True)
     session_manager = SessionManager(workspace)
@@ -505,7 +505,7 @@ async def test_kapybara_format():
         }
     }
     
-    auth = Auth([123])
+    auth = Auth(channel_allowed={"telegram": ["123"]})
     workspace = Path("/tmp/cli-gateway-test6")
     workspace.mkdir(parents=True, exist_ok=True)
     session_manager = SessionManager(workspace)

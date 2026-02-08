@@ -62,8 +62,21 @@ async def main():
     
     # Initialize components
     try:
-        # Auth
-        auth = Auth(config['auth']['allowed_users'])
+        # Auth — build per-channel allowed_users from channel configs
+        channel_allowed = {}
+        for ch_name, ch_conf in config.get('channels', {}).items():
+            if ch_conf.get('enabled', False):
+                users = ch_conf.get('allowed_users', [])
+                if users:
+                    channel_allowed[ch_name] = [str(u) for u in users]
+
+        auth_conf = config.get('auth', {})
+        auth = Auth(
+            channel_allowed=channel_allowed,
+            max_requests_per_minute=auth_conf.get('max_requests_per_minute', 0),
+            state_file=auth_conf.get('state_file'),
+            admin_users=[str(u) for u in auth_conf.get('admin_users', [])],
+        )
         
         # Agents
         agents = {}
