@@ -30,7 +30,7 @@ agents:
     enabled: true
     display_name: "Claude Code"
     command: "claude"
-    args_template: ["-p", "{prompt}", "--session-id", "{session_id}", "--output-format", "text"]
+    args_template: ["-p", "{prompt}", "--session-id", "{session_id}", "--output-format", "text", "--dangerously-skip-permissions"]
     interactive: false
     timeout: 300
     max_concurrent_sessions: 3
@@ -52,7 +52,7 @@ agents:
     enabled: false
     display_name: "GPT Codex"
     command: "codex"
-    args_template: ["--prompt", "{prompt}", "--session", "{session_id}"]
+    args_template: ["--prompt", "{prompt}", "--session", "{session_id}", "-a", "never"]
     interactive: false
     timeout: 300
     max_concurrent_sessions: 3
@@ -69,7 +69,7 @@ agents:
     enabled: false
     display_name: "Gemini CLI"
     command: "gemini-cli"
-    args_template: ["-p", "{prompt}"]
+    args_template: ["-p", "{prompt}", "--yolo"]
     interactive: false
     timeout: 300
     max_concurrent_sessions: 3
