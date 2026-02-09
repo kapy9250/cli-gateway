@@ -40,6 +40,7 @@ channels:
     username: "${EMAIL_USERNAME}"
     password: "${EMAIL_PASSWORD}"
     poll_interval: 30  # seconds between inbox checks
+    data_dir: "./data/email"  # per-sender storage (emails, attachments, sessions)
     allowed_users:  # Email address whitelist
       - "user@example.com"
 

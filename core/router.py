@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from pathlib import Path
 from typing import Dict
 
 import shutil
@@ -49,6 +51,7 @@ class Router:
         self.config = config
         self.rules_loader = RulesLoader()
         self.default_agent = next(iter(agents.keys()), "claude")
+        self._session_locks: Dict[str, asyncio.Lock] = {}
 
     async def handle_message(self, message: IncomingMessage) -> None:
         """Handle one normalized incoming message."""
@@ -353,7 +356,23 @@ class Router:
         await self._forward_to_agent(message)
 
     async def _forward_to_agent(self, message: IncomingMessage) -> None:
-        current = self.session_manager.get_active_session(message.user_id)
+        current = None
+
+        # Email channel: session routing via session_hint from email thread
+        if message.channel == "email":
+            hint = getattr(message, 'session_hint', None)
+            if hint:
+                hinted = self.session_manager.get_session(hint)
+                if hinted and hinted.user_id == str(message.user_id):
+                    self.session_manager.switch_session(message.user_id, hint)
+                    current = hinted
+                    logger.info("Email session resumed via hint: %s", hint)
+                else:
+                    logger.warning("Email session hint %s not found or unauthorized, creating new", hint)
+            # No hint = new email conversation → always create new session
+        else:
+            # Telegram / Discord: use active session as before
+            current = self.session_manager.get_active_session(message.user_id)
 
         if current is None:
             agent_name = self.default_agent
@@ -363,12 +382,12 @@ class Router:
                 return
 
             info = await agent.create_session(user_id=message.user_id, chat_id=message.chat_id)
-            
+
             # Get default model and params from config
             agent_config = self.config['agents'].get(agent_name, {})
             default_model = agent_config.get('default_model')
             default_params = agent_config.get('default_params', {}).copy()
-            
+
             current = self.session_manager.create_session(
                 user_id=message.user_id,
                 chat_id=message.chat_id,
@@ -402,102 +421,124 @@ class Router:
                 params=old_params,
             )
 
-        # Check if session is busy (previous request still running)
-        session_info = agent.get_session_info(current.session_id)
-        if session_info and session_info.is_busy:
-            if hasattr(agent, 'is_process_alive') and agent.is_process_alive(current.session_id):
-                # Process is genuinely running — ask user to wait
-                await self.channel.send_text(
-                    message.chat_id,
-                    "⏳ 上一个请求还在处理中，请稍后再试"
-                )
-                return
-            else:
-                # Process is dead but is_busy wasn't cleared — orphan cleanup
-                logger.warning("Session %s marked busy but process is dead, cleaning up", current.session_id)
-                if hasattr(agent, 'kill_process'):
-                    await agent.kill_process(current.session_id)
+        # Acquire per-session lock to prevent concurrent CLI invocations
+        session_id = current.session_id
+        if session_id not in self._session_locks:
+            self._session_locks[session_id] = asyncio.Lock()
+        lock = self._session_locks[session_id]
+
+        if lock.locked():
+            await self.channel.send_text(
+                message.chat_id,
+                "⏳ 上一个请求还在处理中，请稍后再试"
+            )
+            return
+
+        async with lock:
+            # Clean up orphan busy state (process died without clearing flag)
+            session_info = agent.get_session_info(current.session_id)
+            if session_info and session_info.is_busy:
+                if hasattr(agent, 'is_process_alive') and not agent.is_process_alive(current.session_id):
+                    logger.warning("Session %s marked busy but process is dead, cleaning up", current.session_id)
+                    if hasattr(agent, 'kill_process'):
+                        await agent.kill_process(current.session_id)
+                    else:
+                        session_info.is_busy = False
+
+            # Inject channel rules as context prefix for new sessions
+            channel_context = self.rules_loader.get_system_prompt(message.channel)
+
+            prompt = message.text
+            if message.attachments:
+                # Move attachments to session's user/ directory
+                user_dir = BaseAgent.get_user_upload_dir(agent.sessions[current.session_id].work_dir)
+                att_lines = []
+                for att in message.attachments:
+                    # Copy attachment to session workspace
+                    safe_name = Path(att.filename).name  # Sanitize: prevent path traversal
+                    dest = BaseAgent.safe_filename(user_dir, safe_name)
+                    try:
+                        shutil.copy2(att.filepath, dest)
+                        att_lines.append(f"- {att.filename} ({att.mime_type}, {att.size_bytes} bytes)")
+                        att_lines.append(f"  Path: {dest}")
+                    except Exception as e:
+                        logger.warning(f"Failed to copy attachment {att.filename}: {e}")
+                        att_lines.append(f"- {att.filename} ({att.mime_type}, {att.size_bytes} bytes)")
+                        att_lines.append(f"  Path: {att.filepath}")
+
+                att_info = "\n".join(att_lines)
+                if prompt:
+                    prompt = f"{prompt}\n\n附件:\n{att_info}"
                 else:
-                    session_info.is_busy = False
+                    prompt = f"附件:\n{att_info}"
 
-        # Inject channel rules as context prefix for new sessions
-        channel_context = self.rules_loader.get_system_prompt(message.channel)
-        
-        prompt = message.text
-        if message.attachments:
-            # Move attachments to session's user/ directory
-            user_dir = BaseAgent.get_user_upload_dir(agent.sessions[current.session_id].work_dir)
-            att_lines = []
-            for att in message.attachments:
-                # Copy attachment to session workspace
-                safe_name = Path(att.filename).name  # Sanitize: prevent path traversal
-                dest = BaseAgent.safe_filename(user_dir, safe_name)
-                try:
-                    shutil.copy2(att.filepath, dest)
-                    att_lines.append(f"- {att.filename} ({att.mime_type}, {att.size_bytes} bytes)")
-                    att_lines.append(f"  Path: {dest}")
-                except Exception as e:
-                    logger.warning(f"Failed to copy attachment {att.filename}: {e}")
-                    att_lines.append(f"- {att.filename} ({att.mime_type}, {att.size_bytes} bytes)")
-                    att_lines.append(f"  Path: {att.filepath}")
-            
-            att_info = "\n".join(att_lines)
-            if prompt:
-                prompt = f"{prompt}\n\n附件:\n{att_info}"
+            # Prepend channel context to the first message of a session
+            if channel_context and prompt:
+                prompt = f"{channel_context}{prompt}"
+
+            await self.channel.send_typing(message.chat_id)
+
+            # Tell email channel which session to embed in the reply
+            if message.channel == "email" and hasattr(self.channel, 'set_reply_session'):
+                self.channel.set_reply_session(message.chat_id, current.session_id)
+
+            # Collect response from agent
+            use_streaming = getattr(self.channel, 'supports_streaming', True)
+
+            buffer = ""
+            # Pass model and params from session
+            if use_streaming:
+                # Streaming mode: progressive updates (Telegram, Discord)
+                import time as _time
+                message_id = None
+                last_update_time = 0
+                update_interval = 2.0
+
+                async for chunk in agent.send_message(
+                    current.session_id,
+                    prompt,
+                    model=current.model,
+                    params=current.params
+                ):
+                    if chunk:
+                        buffer += chunk
+                        current_time = _time.time()
+                        if current_time - last_update_time >= update_interval:
+                            if message_id is None:
+                                message_id = await self.channel.send_text(message.chat_id, buffer or "⏳ 处理中...")
+                            else:
+                                await self.channel.edit_message(message.chat_id, message_id, buffer)
+                            last_update_time = current_time
+
+                response = buffer.strip() or "✅ 完成"
+                if message_id is None:
+                    await self.channel.send_text(message.chat_id, response)
+                else:
+                    await self.channel.edit_message(message.chat_id, message_id, response)
             else:
-                prompt = f"附件:\n{att_info}"
+                # Batch mode: collect full response, send once (Email)
+                async for chunk in agent.send_message(
+                    current.session_id,
+                    prompt,
+                    model=current.model,
+                    params=current.params
+                ):
+                    if chunk:
+                        buffer += chunk
 
-        # Prepend channel context to the first message of a session
-        if channel_context and prompt:
-            prompt = f"{channel_context}{prompt}"
-
-        await self.channel.send_typing(message.chat_id)
-
-        # Collect response from agent
-        use_streaming = getattr(self.channel, 'supports_streaming', True)
-
-        buffer = ""
-        # Pass model and params from session
-        if use_streaming:
-            # Streaming mode: progressive updates (Telegram, Discord)
-            import time as _time
-            message_id = None
-            last_update_time = 0
-            update_interval = 2.0
-
-            async for chunk in agent.send_message(
-                current.session_id,
-                prompt,
-                model=current.model,
-                params=current.params
-            ):
-                if chunk:
-                    buffer += chunk
-                    current_time = _time.time()
-                    if current_time - last_update_time >= update_interval:
-                        if message_id is None:
-                            message_id = await self.channel.send_text(message.chat_id, buffer or "⏳ 处理中...")
-                        else:
-                            await self.channel.edit_message(message.chat_id, message_id, buffer)
-                        last_update_time = current_time
-
-            response = buffer.strip() or "✅ 完成"
-            if message_id is None:
+                response = buffer.strip() or "✅ 完成"
                 await self.channel.send_text(message.chat_id, response)
-            else:
-                await self.channel.edit_message(message.chat_id, message_id, response)
-        else:
-            # Batch mode: collect full response, send once (Email)
-            async for chunk in agent.send_message(
-                current.session_id,
-                prompt,
-                model=current.model,
-                params=current.params
-            ):
-                if chunk:
-                    buffer += chunk
 
-            response = buffer.strip() or "✅ 完成"
-            await self.channel.send_text(message.chat_id, response)
-        
-        self.session_manager.touch(current.session_id)
+            self.session_manager.touch(current.session_id)
+
+            # Log prompt/response to sender's session folder (email channel only)
+            if message.channel == "email" and hasattr(self.channel, 'save_session_log'):
+                try:
+                    self.channel.save_session_log(
+                        sender_addr=message.user_id,
+                        session_id=current.session_id,
+                        prompt=message.text or "",
+                        response=response,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to save email session log: %s", e)

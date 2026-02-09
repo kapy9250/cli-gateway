@@ -1,5 +1,11 @@
 """
 Email channel implementation - IMAP polling + SMTP sending
+
+Fixes over original:
+- Uses IMAP UID commands instead of sequence numbers (stable across sessions)
+- Pre-filters sender via BODY.PEEK[HEADER] before downloading full body
+- Non-whitelisted emails stay UNSEEN on IMAP server
+- Per-sender folder structure for emails, attachments, and session logs
 """
 import asyncio
 import email
@@ -7,21 +13,33 @@ import email.header
 import email.utils
 import html
 import imaplib
+import json
 import logging
-import os
+import re
 import smtplib
-import tempfile
-import time
+from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 from pathlib import Path
-from typing import Optional, Callable, Awaitable, List, Set
+from typing import Optional, List, Set
 
 from channels.base import BaseChannel, IncomingMessage, Attachment
 
 logger = logging.getLogger(__name__)
+
+# Marker pattern embedded in reply emails so the next reply can resume the session.
+# Format: [Session: <hex-session-id>]
+_SESSION_MARKER_RE = re.compile(r'\[Session:\s*([a-f0-9-]{6,})\]', re.IGNORECASE)
+
+
+def _sanitize_dirname(addr: str) -> str:
+    """Turn an email address into a safe directory name.
+
+    e.g. 'Click.Song@gmail.com' -> 'click.song_at_gmail.com'
+    """
+    return addr.lower().replace("@", "_at_")
 
 
 class EmailChannel(BaseChannel):
@@ -51,6 +69,10 @@ class EmailChannel(BaseChannel):
         # Polling
         self.poll_interval = config.get('poll_interval', 30)
 
+        # Data directory for per-sender storage
+        self.data_dir = Path(config.get('data_dir', './data/email'))
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+
         # Pre-filter: skip unauthorized senders at IMAP level to avoid sending
         # reply emails to spam. The Router also does auth.check() but that would
         # trigger a reply email which is undesirable for unknown senders.
@@ -64,8 +86,89 @@ class EmailChannel(BaseChannel):
         self._seen_uids: Set[str] = set()
         # Map chat_id (sender email) -> threading info + original body
         self._thread_refs: dict = {}
+        # Map chat_id -> session_id for including in the next reply
+        self._reply_session_id: dict = {}
 
-        logger.info("EmailChannel initialized")
+        logger.info("EmailChannel initialized (data_dir=%s)", self.data_dir)
+
+    # ── per-sender directory helpers ──
+
+    def _sender_dir(self, sender_addr: str) -> Path:
+        """Get (and create) the root directory for a sender."""
+        d = self.data_dir / _sanitize_dirname(sender_addr)
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _sender_emails_dir(self, sender_addr: str) -> Path:
+        d = self._sender_dir(sender_addr) / "emails"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _sender_attachments_dir(self, sender_addr: str) -> Path:
+        d = self._sender_dir(sender_addr) / "attachments"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _sender_sessions_dir(self, sender_addr: str) -> Path:
+        d = self._sender_dir(sender_addr) / "sessions"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _save_email_record(self, sender_addr: str, subject: str, body: str,
+                           message_id: str, attachments: List[Attachment]) -> None:
+        """Persist an incoming email to the sender's emails/ folder."""
+        emails_dir = self._sender_emails_dir(sender_addr)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "from": sender_addr,
+            "subject": subject,
+            "message_id": message_id,
+            "body": body,
+            "attachments": [
+                {"filename": a.filename, "path": a.filepath,
+                 "mime_type": a.mime_type, "size_bytes": a.size_bytes}
+                for a in attachments
+            ],
+        }
+        filepath = emails_dir / f"{ts}.json"
+        # Avoid collision
+        counter = 1
+        while filepath.exists():
+            filepath = emails_dir / f"{ts}_{counter}.json"
+            counter += 1
+        filepath.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.debug("Saved email record: %s", filepath)
+
+    def set_reply_session(self, chat_id: str, session_id: str) -> None:
+        """Set session ID to embed in the next reply to this chat."""
+        self._reply_session_id[chat_id] = session_id
+
+    @staticmethod
+    def _extract_session_hint(body: str) -> Optional[str]:
+        """Extract session ID from email body (including quoted reply text).
+
+        Looks for the marker ``[Session: <id>]`` that we embed in outgoing
+        replies.  Returns the first match, which corresponds to the most
+        recent reply in the thread.
+        """
+        m = _SESSION_MARKER_RE.search(body)
+        return m.group(1) if m else None
+
+    def save_session_log(self, sender_addr: str, session_id: str,
+                         prompt: str, response: str) -> None:
+        """Append a prompt/response exchange to the sender's session log."""
+        sessions_dir = self._sender_sessions_dir(sender_addr)
+        log_file = sessions_dir / f"{session_id}.jsonl"
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "prompt": prompt,
+            "response": response,
+        }
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    # ── channel interface ──
 
     async def start(self):
         """Start IMAP polling loop"""
@@ -108,6 +211,11 @@ class EmailChannel(BaseChannel):
             if refs:
                 msg['In-Reply-To'] = refs.get('message_id', '')
                 msg['References'] = refs.get('references', '')
+
+            # Append session marker so the recipient can reply to continue
+            session_id = self._reply_session_id.pop(chat_id, None)
+            if session_id:
+                text += f"\n\n[Session: {session_id}]"
 
             # Build body with quoted original
             original_body = refs.get('original_body', '') if refs else ''
@@ -217,7 +325,14 @@ class EmailChannel(BaseChannel):
             await asyncio.sleep(self.poll_interval)
 
     def _imap_fetch_new(self) -> List[IncomingMessage]:
-        """Synchronous IMAP fetch (called via asyncio.to_thread)"""
+        """Synchronous IMAP fetch using UID commands.
+
+        1. UID SEARCH UNSEEN  — get stable UIDs
+        2. UID FETCH (BODY.PEEK[HEADER])  — check sender without marking read
+        3. Skip non-whitelisted senders (they stay UNSEEN)
+        4. UID FETCH (RFC822)  — download full body for whitelisted senders
+           (this implicitly sets \\Seen flag)
+        """
         messages = []
 
         try:
@@ -229,45 +344,59 @@ class EmailChannel(BaseChannel):
             imap.login(self.username, self.password)
             imap.select('INBOX')
 
-            # Search for unseen messages
-            status, data = imap.search(None, 'UNSEEN')
+            # UID SEARCH for unseen messages (UIDs are stable across sessions)
+            status, data = imap.uid('search', None, 'UNSEEN')  # type: ignore[arg-type]
             if status != 'OK' or not data[0]:
                 imap.logout()
                 return messages
 
-            uids = data[0].split()
+            uid_list = data[0].split()
 
-            for uid in uids:
+            for uid in uid_list:
                 uid_str = uid.decode()
                 if uid_str in self._seen_uids:
                     continue
 
-                status, msg_data = imap.fetch(uid, '(RFC822)')
+                # Step 1: Peek at headers only (does NOT set \Seen flag)
+                status, header_data = imap.uid('fetch', uid, '(BODY.PEEK[HEADER])')
+                if status != 'OK':
+                    continue
+
+                raw_header = header_data[0][1]
+                header_msg = email.message_from_bytes(raw_header)
+
+                # Parse sender from header
+                from_header = header_msg.get('From', '')
+                sender_name, sender_addr = email.utils.parseaddr(from_header)
+                sender_addr = sender_addr.lower()
+
+                # Pre-filter: skip unauthorized senders silently.
+                # Because we used BODY.PEEK, the message stays UNSEEN.
+                if self._allowed_senders and sender_addr not in self._allowed_senders:
+                    logger.info("Skipping email from non-whitelisted sender: %s (stays unread)", sender_addr)
+                    self._seen_uids.add(uid_str)
+                    continue
+
+                # Step 2: Fetch full message for whitelisted senders.
+                # RFC822 (= BODY[]) implicitly sets the \Seen flag.
+                status, msg_data = imap.uid('fetch', uid, '(RFC822)')
                 if status != 'OK':
                     continue
 
                 raw_email = msg_data[0][1]
                 msg = email.message_from_bytes(raw_email)
 
-                # Parse sender
-                from_header = msg.get('From', '')
-                sender_name, sender_addr = email.utils.parseaddr(from_header)
-                sender_addr = sender_addr.lower()
-
-                # Pre-filter: skip unauthorized senders silently
-                if self._allowed_senders and sender_addr not in self._allowed_senders:
-                    logger.warning("Ignoring email from unauthorized sender: %s", sender_addr)
-                    self._seen_uids.add(uid_str)
-                    continue
-
                 # Parse subject
                 subject = self._decode_header(msg.get('Subject', ''))
 
-                # Parse body
+                # Parse body (full text including quoted portions)
                 body = self._extract_body(msg)
 
-                # Parse attachments
-                attachments = self._extract_attachments(msg)
+                # Extract session hint from body (may appear in quoted reply)
+                session_hint = self._extract_session_hint(body)
+
+                # Parse and save attachments to sender's folder
+                attachments = self._extract_attachments(msg, sender_addr)
 
                 # Store threading info + original body for quoting
                 message_id = msg.get('Message-ID', '')
@@ -278,6 +407,11 @@ class EmailChannel(BaseChannel):
                     'subject': subject,
                     'original_body': body,
                 }
+
+                # Save email record to sender's emails/ folder
+                self._save_email_record(
+                    sender_addr, subject, body, message_id, attachments
+                )
 
                 # Build text (subject + body)
                 text = body
@@ -294,6 +428,7 @@ class EmailChannel(BaseChannel):
                     is_mention_bot=True,  # All emails are directed at us
                     reply_to_text=None,
                     attachments=attachments,
+                    session_hint=session_hint,
                 )
                 messages.append(incoming)
                 self._seen_uids.add(uid_str)
@@ -341,8 +476,6 @@ class EmailChannel(BaseChannel):
                 if part.get_content_type() == 'text/html':
                     payload = part.get_payload(decode=True)
                     charset = part.get_content_charset() or 'utf-8'
-                    # Basic HTML stripping
-                    import re
                     text = payload.decode(charset, errors='replace')
                     return re.sub(r'<[^>]+>', '', text).strip()
         else:
@@ -353,11 +486,10 @@ class EmailChannel(BaseChannel):
 
         return ""
 
-    def _extract_attachments(self, msg) -> List[Attachment]:
-        """Extract and save attachments from email"""
+    def _extract_attachments(self, msg, sender_addr: str) -> List[Attachment]:
+        """Extract and save attachments to the sender's attachments/ folder."""
         attachments = []
-        temp_dir = Path(tempfile.gettempdir()) / "cli-gateway" / "email"
-        temp_dir.mkdir(parents=True, exist_ok=True)
+        att_dir = self._sender_attachments_dir(sender_addr)
 
         for part in msg.walk():
             disposition = str(part.get('Content-Disposition', ''))
@@ -383,13 +515,17 @@ class EmailChannel(BaseChannel):
                 if not payload:
                     continue
 
-                filepath = temp_dir / filename
-                # Avoid overwrite
+                # Add timestamp prefix to avoid collisions
+                ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                stem = Path(filename).stem
+                suffix = Path(filename).suffix
+                dest_name = f"{ts}_{stem}{suffix}"
+                filepath = att_dir / dest_name
+
+                # Extra safety: avoid overwrite
                 counter = 1
                 while filepath.exists():
-                    stem = Path(filename).stem
-                    suffix = Path(filename).suffix
-                    filepath = temp_dir / f"{stem}_{counter}{suffix}"
+                    filepath = att_dir / f"{ts}_{stem}_{counter}{suffix}"
                     counter += 1
 
                 filepath.write_bytes(payload)
@@ -400,7 +536,7 @@ class EmailChannel(BaseChannel):
                     mime_type=part.get_content_type(),
                     size_bytes=len(payload),
                 ))
-                logger.info(f"Extracted email attachment: {filepath}")
+                logger.info(f"Saved email attachment: {filepath}")
 
             except Exception as e:
                 logger.error(f"Failed to extract attachment {filename}: {e}")

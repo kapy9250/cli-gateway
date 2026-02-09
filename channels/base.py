@@ -27,6 +27,7 @@ class IncomingMessage:
     is_mention_bot: bool  # Does this mention the bot?
     reply_to_text: Optional[str] = None  # Original message being replied to
     attachments: List[Attachment] = None  # File attachments
+    session_hint: Optional[str] = None  # Session ID hint from channel (e.g. from email thread)
     
     def __post_init__(self):
         if self.attachments is None:
