@@ -10,6 +10,7 @@ from pathlib import Path
 
 from utils.helpers import load_config
 from core.auth import Auth
+from core.billing import BillingTracker
 from core.session import SessionManager
 from core.router import Router
 from agents.claude_code import ClaudeCodeAgent
@@ -138,9 +139,15 @@ async def main():
             logger.error("❌ No channels enabled")
             sys.exit(1)
         
+        # Billing tracker (stored outside session workspace)
+        billing_conf = config.get('billing', {})
+        billing_dir = billing_conf.get('dir', './data/billing')
+        billing = BillingTracker(billing_dir=billing_dir)
+        logger.info("✅ Billing tracker initialized (dir=%s)", billing_dir)
+
         # Create Router and wire up each channel
         for channel_name, channel in channels:
-            router = Router(auth, session_manager, agents, channel, config)
+            router = Router(auth, session_manager, agents, channel, config, billing=billing)
             channel.set_message_handler(router.handle_message)
         
         logger.info("✅ All components initialized")

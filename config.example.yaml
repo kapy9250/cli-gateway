@@ -126,6 +126,12 @@ agents:
     max_concurrent_sessions: 2
     env: {}
 
+# ──────────── 账单 ────────────
+# Billing files are stored outside the session workspace
+# to prevent users from accessing cost data.
+billing:
+  dir: "./data/billing"
+
 # ──────────── Watchdog ────────────
 watchdog:
   enabled: true

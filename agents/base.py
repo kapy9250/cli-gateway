@@ -8,6 +8,18 @@ from pathlib import Path
 
 
 @dataclass
+class UsageInfo:
+    """Token usage and cost info from a single agent invocation."""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    cost_usd: float = 0.0
+    model: str = ""
+    duration_ms: int = 0
+
+
+@dataclass
 class SessionInfo:
     """Session metadata"""
     session_id: str
@@ -49,6 +61,7 @@ class BaseAgent(ABC):
         self.workspace_base = workspace_base / name
         self.workspace_base.mkdir(parents=True, exist_ok=True)
         self.sessions: Dict[str, SessionInfo] = {}
+        self._last_usage: Dict[str, UsageInfo] = {}
     
     @staticmethod
     def init_workspace(work_dir: Path) -> None:
@@ -136,6 +149,10 @@ class BaseAgent(ABC):
     def get_session_info(self, session_id: str) -> Optional[SessionInfo]:
         """Get session metadata"""
         return self.sessions.get(session_id)
+
+    def get_last_usage(self, session_id: str) -> Optional[UsageInfo]:
+        """Pop and return the usage info from the last send_message call."""
+        return self._last_usage.pop(session_id, None)
     
     def list_sessions(self, user_id: str = None) -> List[SessionInfo]:
         """List sessions, optionally filtered by user"""

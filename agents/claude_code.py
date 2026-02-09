@@ -2,15 +2,15 @@
 Claude Code CLI agent adapter
 """
 import asyncio
+import json
 import logging
 import os
-import secrets
 import uuid
 import time
 from pathlib import Path
 from typing import AsyncIterator, Dict, Optional
 
-from agents.base import BaseAgent, SessionInfo
+from agents.base import BaseAgent, SessionInfo, UsageInfo
 
 logger = logging.getLogger(__name__)
 
@@ -76,13 +76,11 @@ class ClaudeCodeAgent(BaseAgent):
 
     async def send_message(self, session_id: str, message: str, model: str = None, params: dict = None) -> AsyncIterator[str]:
         """
-        Send message to Claude Code and stream output
+        Send message to Claude Code using --output-format json.
 
-        Args:
-            session_id: Session ID
-            message: User message/prompt
-            model: Model alias (e.g. "sonnet", "opus")
-            params: Custom parameters (e.g. {"thinking": "high"})
+        Parses the JSON response to extract result text and usage/cost info.
+        Usage info is stored in self._last_usage[session_id] for the Router
+        to pick up for billing.
         """
         session = self.sessions.get(session_id)
         if not session:
@@ -98,21 +96,36 @@ class ClaudeCodeAgent(BaseAgent):
             command = self.config['command']
             args_template = self.config.get('args_template', [])
 
-            # Replace placeholders
+            # Replace placeholders and force --output-format json
             args = []
-            for arg in args_template:
+            skip_next = False
+            for i, arg in enumerate(args_template):
+                if skip_next:
+                    skip_next = False
+                    continue
+                if arg == "--output-format":
+                    # Replace the format value with json
+                    args.append("--output-format")
+                    args.append("json")
+                    skip_next = True
+                    continue
                 arg = arg.replace("{prompt}", message)
                 arg = arg.replace("{session_id}", session_id)
                 args.append(arg)
 
+            # Ensure --output-format json is present
+            if "--output-format" not in args:
+                args.extend(["--output-format", "json"])
+
             # Add model parameter if specified
+            resolved_model = ""
             if model:
                 model_flag = self.config.get('supported_params', {}).get('model')
                 if model_flag:
-                    # Get full model name from alias
                     models = self.config.get('models', {})
-                    model_full = models.get(model, model)  # Fallback to alias if not found
+                    model_full = models.get(model, model)
                     args.extend([model_flag, model_full])
+                    resolved_model = model_full
 
             # Add custom parameters
             if params:
@@ -145,65 +158,69 @@ class ClaudeCodeAgent(BaseAgent):
                 # Track subprocess for cleanup
                 self._processes[session_id] = process
 
-                # Stream stdout in real-time
-                start_time = time.time()
-                stderr_task = asyncio.create_task(process.stderr.read())
-
-                while True:
-                    # Check timeout
-                    if time.time() - start_time > timeout:
-                        process.kill()
-                        await process.wait()
-                        yield f"⚠️ 操作超时（{timeout}秒）"
-                        break
-
-                    # Read line by line
-                    try:
-                        line = await asyncio.wait_for(
-                            process.stdout.readline(),
-                            timeout=1.0
-                        )
-                    except asyncio.TimeoutError:
-                        # Check if process is still running
-                        if process.returncode is not None:
-                            break
-                        continue
-
-                    if not line:
-                        # EOF
-                        break
-
-                    # Decode and yield
-                    text = line.decode('utf-8', errors='replace')
-                    if text:
-                        yield text
-
-                # Wait for process to complete
-                await process.wait()
-
-                # Check stderr
+                # Read all stdout (JSON mode outputs a single JSON blob)
                 try:
-                    stderr = await asyncio.wait_for(stderr_task, timeout=1.0)
-                    error = stderr.decode('utf-8', errors='replace')
-                    if error:
-                        logger.warning(f"Claude Code stderr: {error}")
+                    stdout_data, stderr_data = await asyncio.wait_for(
+                        process.communicate(),
+                        timeout=timeout,
+                    )
                 except asyncio.TimeoutError:
-                    error = None
-
-                if process.returncode != 0:
-                    yield f"\n\n❌ Exit code: {process.returncode}"
-                    if error:
-                        yield f"\nError: {error}"
-
-            except asyncio.TimeoutError:
-                logger.error(f"Claude Code timeout after {timeout}s")
-                yield f"⚠️ 操作超时（{timeout}秒）"
-                # Try to kill process
-                try:
                     process.kill()
                     await process.wait()
-                except:
-                    pass
+                    logger.error(f"Claude Code timeout after {timeout}s")
+                    yield f"⚠️ 操作超时（{timeout}秒）"
+                    return
+
+                raw = stdout_data.decode('utf-8', errors='replace').strip()
+                error = stderr_data.decode('utf-8', errors='replace').strip()
+
+                if error:
+                    logger.warning(f"Claude Code stderr: {error}")
+
+                if process.returncode != 0:
+                    # Try to parse error from JSON, fallback to raw
+                    yield f"❌ Exit code: {process.returncode}"
+                    if raw:
+                        try:
+                            data = json.loads(raw)
+                            yield f"\n{data.get('result', raw)}"
+                        except json.JSONDecodeError:
+                            yield f"\n{raw}"
+                    if error:
+                        yield f"\nError: {error}"
+                    return
+
+                # Parse JSON response
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    # Fallback: treat as plain text
+                    logger.warning("Failed to parse Claude JSON output, yielding raw")
+                    yield raw
+                    return
+
+                # Extract result text
+                result_text = data.get('result', '')
+                if result_text:
+                    yield result_text
+
+                # Extract usage info for billing
+                usage = data.get('usage', {})
+                model_usage = data.get('modelUsage', {})
+                # Determine actual model used
+                actual_model = resolved_model
+                if model_usage:
+                    actual_model = next(iter(model_usage.keys()), resolved_model)
+
+                self._last_usage[session_id] = UsageInfo(
+                    input_tokens=usage.get('input_tokens', 0),
+                    output_tokens=usage.get('output_tokens', 0),
+                    cache_read_tokens=usage.get('cache_read_input_tokens', 0),
+                    cache_creation_tokens=usage.get('cache_creation_input_tokens', 0),
+                    cost_usd=data.get('total_cost_usd', 0.0),
+                    model=actual_model,
+                    duration_ms=data.get('duration_ms', 0),
+                )
 
             except FileNotFoundError:
                 error_msg = f"❌ Claude Code CLI 未安装或未找到命令: {command}"

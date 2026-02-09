@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import shutil
 from agents.base import BaseAgent, SessionInfo
 from channels.base import BaseChannel, IncomingMessage
 from core.auth import Auth
+from core.billing import BillingTracker
 from core.rules import RulesLoader
 from core.session import SessionManager
 
@@ -43,12 +44,14 @@ class Router:
         agents: Dict[str, BaseAgent],
         channel: BaseChannel,
         config: dict,
+        billing: Optional[BillingTracker] = None,
     ) -> None:
         self.auth = auth
         self.session_manager = session_manager
         self.agents = agents
         self.channel = channel
         self.config = config
+        self.billing = billing
         self.rules_loader = RulesLoader()
         self.default_agent = next(iter(agents.keys()), "claude")
         self._session_locks: Dict[str, asyncio.Lock] = {}
@@ -530,6 +533,24 @@ class Router:
                 await self.channel.send_text(message.chat_id, response)
 
             self.session_manager.touch(current.session_id)
+
+            # Record billing from agent usage info
+            if self.billing:
+                usage = agent.get_last_usage(current.session_id)
+                if usage:
+                    self.billing.record(
+                        session_id=current.session_id,
+                        user_id=str(message.user_id),
+                        channel=message.channel,
+                        agent_name=current.agent_name,
+                        model=usage.model,
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        cache_read_tokens=usage.cache_read_tokens,
+                        cache_creation_tokens=usage.cache_creation_tokens,
+                        cost_usd=usage.cost_usd,
+                        duration_ms=usage.duration_ms,
+                    )
 
             # Log prompt/response to sender's session folder (email channel only)
             if message.channel == "email" and hasattr(self.channel, 'save_session_log'):
