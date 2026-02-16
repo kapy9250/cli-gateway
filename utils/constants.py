@@ -29,7 +29,18 @@ GATEWAY_COMMANDS = frozenset({
     '/param',
     '/params',
     '/reset',
+    '/files',
+    '/download',
+    '/cancel',
+    '/name',
+    '/history',
 })
+
+# ── Auto-retry ──
+MAX_AGENT_RETRIES = 1  # Number of automatic retries on transient agent failure
+
+# ── History ──
+MAX_HISTORY_ENTRIES = 20  # Max prompt/response pairs to keep per session
 
 # ── CLI output format ──
 CLI_OUTPUT_FORMAT_FLAG = "--output-format"

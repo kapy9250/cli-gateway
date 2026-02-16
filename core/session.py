@@ -26,10 +26,14 @@ class ManagedSession:
     last_active: float
     model: Optional[str] = None  # Model name (short alias)
     params: Optional[Dict[str, str]] = None  # Custom parameters
-    
+    name: Optional[str] = None  # Human-readable session label
+    history: Optional[List[Dict[str, str]]] = None  # Conversation history [{role, content}]
+
     def __post_init__(self):
         if self.params is None:
             self.params = {}
+        if self.history is None:
+            self.history = []
 
 
 class SessionManager:
@@ -69,6 +73,8 @@ class SessionManager:
                     last_active=float(item["last_active"]),
                     model=item.get("model"),
                     params=item.get("params", {}),
+                    name=item.get("name"),
+                    history=item.get("history", []),
                 )
             self.sessions = loaded
             logger.info("Loaded %d sessions from disk", len(self.sessions))
@@ -218,6 +224,35 @@ class SessionManager:
         session.last_active = time.time()
         self._save()
         return True
+
+    def update_name(self, session_id: str, name: str) -> bool:
+        """Update session human-readable name."""
+        session = self.sessions.get(session_id)
+        if session is None:
+            return False
+        session.name = name
+        session.last_active = time.time()
+        self._save()
+        return True
+
+    def add_history(self, session_id: str, role: str, content: str, max_entries: int = 20) -> None:
+        """Append a history entry (prompt or response) to the session."""
+        session = self.sessions.get(session_id)
+        if session is None:
+            return
+        session.history.append({"role": role, "content": content[:500]})  # Truncate for storage
+        # Trim to max_entries pairs (each pair = 2 entries)
+        max_items = max_entries * 2
+        if len(session.history) > max_items:
+            session.history = session.history[-max_items:]
+        self._save()
+
+    def get_history(self, session_id: str) -> List[Dict[str, str]]:
+        """Get conversation history for a session."""
+        session = self.sessions.get(session_id)
+        if session is None:
+            return []
+        return session.history
 
     def cleanup_inactive_sessions(self) -> int:
         """Cleanup sessions inactive longer than configured threshold."""

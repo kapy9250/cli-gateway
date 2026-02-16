@@ -19,6 +19,7 @@ class TestGatewayCommands:
         expected = {
             "/start", "/help", "/agent", "/sessions", "/kill",
             "/current", "/switch", "/model", "/param", "/params", "/reset",
+            "/files", "/download", "/cancel", "/name", "/history",
         }
         assert GATEWAY_COMMANDS == expected
 

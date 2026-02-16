@@ -181,7 +181,7 @@ class ClaudeCodeAgent(BaseAgent):
                     process.kill()
                     await process.wait()
                     logger.error(f"Claude Code timeout after {timeout}s")
-                    yield f"⚠️ 操作超时（{timeout}秒）"
+                    yield f"⚠️ 操作超时（{timeout}秒），结果可能不完整"
                     return
 
                 raw = stdout_data.decode('utf-8', errors='replace').strip()

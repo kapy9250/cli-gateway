@@ -14,7 +14,7 @@ from core.auth import Auth
 from core.billing import BillingTracker
 from core.rules import RulesLoader
 from core.session import SessionManager
-from utils.constants import GATEWAY_COMMANDS, MAX_ATTACHMENT_SIZE_BYTES, STREAM_UPDATE_INTERVAL
+from utils.constants import GATEWAY_COMMANDS, MAX_ATTACHMENT_SIZE_BYTES, MAX_AGENT_RETRIES, MAX_HISTORY_ENTRIES, STREAM_UPDATE_INTERVAL
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ class Router:
         self._user_agent_pref: Dict[str, str] = {}
         self._user_model_pref: Dict[str, str] = {}
         self._session_locks: Dict[str, asyncio.Lock] = {}
+        self._message_queues: Dict[str, asyncio.Queue] = {}
 
     @staticmethod
     def _fmt(channel: str, text: str) -> str:
@@ -138,12 +139,19 @@ class Router:
                         "current - 查看当前会话",
                         "switch &lt;id&gt; - 切换到指定会话",
                         "kill - 销毁当前会话",
+                        "name &lt;label&gt; - 为当前会话命名",
+                        "cancel - 取消当前执行",
+                        "history - 查看对话历史",
                         "",
                         "<b>模型配置</b>",
                         "model [&lt;alias&gt;] - 切换模型或查看可用模型",
                         "param [&lt;key&gt; &lt;value&gt;] - 设置参数或查看可用参数",
                         "params - 查看当前配置",
                         "reset - 重置为默认配置",
+                        "",
+                        "<b>文件管理</b>",
+                        "files - 列出当前会话输出文件",
+                        "download &lt;filename&gt; - 下载文件",
                         "",
                         "<b>示例</b>",
                         "<code>kapy model opus</code>",
@@ -207,7 +215,8 @@ class Router:
             lines = ["你的会话："]
             for item in sessions:
                 marker = "⭐" if current and current.session_id == item.session_id else "-"
-                lines.append(f"{marker} {item.session_id} ({item.agent_name})")
+                name_suffix = f" [{item.name}]" if getattr(item, 'name', None) else ""
+                lines.append(f"{marker} {item.session_id} ({item.agent_name}){name_suffix}")
             await self._reply(message, "\n".join(lines))
             return
 
@@ -384,6 +393,102 @@ class Router:
             await self._reply(message, "✅ 已重置为默认配置")
             return
 
+        if command == "/files":
+            current = self.session_manager.get_active_session(message.user_id)
+            if not current:
+                await self._reply(message, "❌ 当前无活跃会话")
+                return
+            agent = self.agents.get(current.agent_name)
+            if not agent or current.session_id not in agent.sessions:
+                await self._reply(message, "❌ 会话不可用")
+                return
+            ai_dir = agent.sessions[current.session_id].work_dir / "ai"
+            if not ai_dir.exists():
+                await self._reply(message, "暂无输出文件")
+                return
+            files = [f.name for f in ai_dir.iterdir() if f.is_file()]
+            if not files:
+                await self._reply(message, "暂无输出文件")
+                return
+            lines = ["📁 输出文件："]
+            for fname in sorted(files):
+                lines.append(f"- {fname}")
+            lines.append("\n使用 /download &lt;filename&gt; 下载")
+            await self._reply(message, "\n".join(lines))
+            return
+
+        if command == "/download":
+            current = self.session_manager.get_active_session(message.user_id)
+            if not current:
+                await self._reply(message, "❌ 当前无活跃会话")
+                return
+            if len(parts) < 2:
+                await self._reply(message, "用法: /download &lt;filename&gt;")
+                return
+            filename = parts[1].strip()
+            agent = self.agents.get(current.agent_name)
+            if not agent or current.session_id not in agent.sessions:
+                await self._reply(message, "❌ 会话不可用")
+                return
+            ai_dir = agent.sessions[current.session_id].work_dir / "ai"
+            filepath = (ai_dir / filename).resolve()
+            # Path traversal protection
+            if not str(filepath).startswith(str(ai_dir.resolve())):
+                await self._reply(message, "❌ 非法路径")
+                return
+            if not filepath.exists() or not filepath.is_file():
+                await self._reply(message, f"❌ 未找到文件: {filename}")
+                return
+            await self.channel.send_file(message.chat_id, str(filepath), caption=filename)
+            return
+
+        if command == "/cancel":
+            current = self.session_manager.get_active_session(message.user_id)
+            if not current:
+                await self._reply(message, "❌ 当前无活跃会话")
+                return
+            agent = self.agents.get(current.agent_name)
+            if not agent:
+                await self._reply(message, "❌ Agent 不可用")
+                return
+            session_info = agent.get_session_info(current.session_id)
+            if not session_info or not session_info.is_busy:
+                await self._reply(message, "当前无正在执行的任务")
+                return
+            await agent.cancel(current.session_id)
+            await self._reply(message, "✅ 已取消当前操作")
+            return
+
+        if command == "/name":
+            current = self.session_manager.get_active_session(message.user_id)
+            if not current:
+                await self._reply(message, "❌ 当前无活跃会话")
+                return
+            if len(parts) < 2:
+                await self._reply(message, "用法: /name &lt;label&gt;")
+                return
+            name = " ".join(parts[1:]).strip()
+            self.session_manager.update_name(current.session_id, name)
+            await self._reply(message, f"✅ 会话已命名: {name}")
+            return
+
+        if command == "/history":
+            current = self.session_manager.get_active_session(message.user_id)
+            if not current:
+                await self._reply(message, "❌ 当前无活跃会话")
+                return
+            history = self.session_manager.get_history(current.session_id)
+            if not history:
+                await self._reply(message, "暂无对话历史")
+                return
+            lines = ["📜 对话历史："]
+            for entry in history[-10:]:  # Show last 10 entries
+                role = "👤" if entry.get("role") == "user" else "🤖"
+                content = entry.get("content", "")[:100]
+                lines.append(f"{role} {content}")
+            await self._reply(message, "\n".join(lines))
+            return
+
         # Unknown command: forward to agent
         await self._forward_to_agent(message)
 
@@ -408,7 +513,7 @@ class Router:
         lock = self._session_locks[session_id]
 
         if lock.locked():
-            await self.channel.send_text(message.chat_id, "⏳ 上一个请求还在处理中，请稍后再试")
+            await self.channel.send_text(message.chat_id, "⏳ 消息已排队，上一个请求处理中，请稍候")
             return
 
         async with lock:
@@ -419,9 +524,34 @@ class Router:
             if message.channel == "email" and hasattr(self.channel, 'set_reply_session'):
                 self.channel.set_reply_session(message.chat_id, current.session_id)
 
-            response = await self._deliver_response(message, agent, current, prompt)
+            # Record user prompt in history
+            self.session_manager.add_history(current.session_id, "user", message.text or "", MAX_HISTORY_ENTRIES)
+
+            # Auto-retry on transient failure
+            response = None
+            last_error = None
+            for attempt in range(MAX_AGENT_RETRIES + 1):
+                try:
+                    response = await self._deliver_response(message, agent, current, prompt)
+                    break
+                except Exception as e:
+                    last_error = e
+                    logger.warning("Agent error (attempt %d/%d): %s", attempt + 1, MAX_AGENT_RETRIES + 1, e)
+                    if attempt < MAX_AGENT_RETRIES:
+                        logger.info("Retrying...")
+                        continue
+
+            if response is None:
+                # All retries exhausted — send user-friendly error
+                logger.error("Agent failed after %d attempts: %s", MAX_AGENT_RETRIES + 1, last_error)
+                response = "❌ 处理请求时出错，请稍后重试"
+                await self.channel.send_text(message.chat_id, response)
+
+            # Record assistant response in history
+            self.session_manager.add_history(current.session_id, "assistant", response or "", MAX_HISTORY_ENTRIES)
+
             self.session_manager.touch(current.session_id)
-            self._record_usage(message, agent, current, response)
+            self._record_usage(message, agent, current, response or "")
 
     # ── _forward_to_agent sub-steps ──
 
