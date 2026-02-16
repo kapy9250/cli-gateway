@@ -48,6 +48,7 @@ async def agent_dispatcher_middleware(ctx: "Context", next: Callable[[], Awaitab
             response = await delivery.deliver(
                 ctx,
                 agent.send_message(session_id, prompt, model=session.model, params=session.params),
+                session_id=session_id,
             )
         except Exception as e:
             logger.error("Agent error: %s", e, exc_info=True)

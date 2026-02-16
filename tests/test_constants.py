@@ -4,7 +4,6 @@ import re
 import pytest
 
 from utils.constants import (
-    GATEWAY_COMMANDS,
     MAX_ATTACHMENT_SIZE_BYTES,
     MAX_MESSAGE_LENGTH,
     SESSION_MARKER_RE,
@@ -13,18 +12,33 @@ from utils.constants import (
 )
 
 
-class TestGatewayCommands:
+class TestCommandRegistry:
 
-    def test_gateway_commands_complete(self):
+    def test_all_expected_commands_registered(self):
+        """Verify the command registry contains all 16 gateway commands."""
+        from core.command_registry import registry
+
         expected = {
             "/start", "/help", "/agent", "/sessions", "/kill",
             "/current", "/switch", "/model", "/param", "/params", "/reset",
             "/files", "/download", "/cancel", "/name", "/history",
         }
-        assert GATEWAY_COMMANDS == expected
+        registered = {spec.name for spec in registry.list_all()}
+        assert registered == expected
 
-    def test_gateway_commands_is_frozenset(self):
-        assert isinstance(GATEWAY_COMMANDS, frozenset)
+    def test_every_command_has_description(self):
+        """Every registered command must have a non-empty description."""
+        from core.command_registry import registry
+
+        for spec in registry.list_all():
+            assert spec.description, f"Command {spec.name} has no description"
+
+    def test_every_command_has_callable_handler(self):
+        """Every registered command must have a callable handler."""
+        from core.command_registry import registry
+
+        for spec in registry.list_all():
+            assert callable(spec.handler), f"Command {spec.name} handler is not callable"
 
 
 class TestSessionMarker:

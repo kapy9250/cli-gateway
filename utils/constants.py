@@ -16,26 +16,6 @@ MAX_MESSAGE_LENGTH = {
     "email": None,  # no hard limit
 }
 
-# ── Gateway commands (intercepted by Router, not forwarded to agent) ──
-GATEWAY_COMMANDS = frozenset({
-    '/start',
-    '/help',
-    '/agent',
-    '/sessions',
-    '/kill',
-    '/current',
-    '/switch',
-    '/model',
-    '/param',
-    '/params',
-    '/reset',
-    '/files',
-    '/download',
-    '/cancel',
-    '/name',
-    '/history',
-})
-
 # ── History ──
 MAX_HISTORY_ENTRIES = 20  # Max prompt/response pairs to keep per session
 

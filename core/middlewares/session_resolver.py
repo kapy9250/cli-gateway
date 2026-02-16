@@ -88,8 +88,11 @@ async def _recover_stale_session(ctx: "Context", agent, current):
     old_model = current.model
     old_params = current.params.copy() if current.params else {}
 
-    ctx.session_manager.destroy_session(current.session_id)
-    router._session_locks.pop(current.session_id, None)
+    old_session_id = current.session_id
+    try:
+        ctx.session_manager.destroy_session(old_session_id)
+    finally:
+        router._session_locks.pop(old_session_id, None)
     info = await agent.create_session(user_id=message.user_id, chat_id=message.chat_id)
     return ctx.session_manager.create_session(
         user_id=message.user_id,

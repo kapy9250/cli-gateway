@@ -52,8 +52,10 @@ async def handle_agent(ctx: "Context") -> None:
                 await old_agent.destroy_session(current.session_id)
             except Exception:
                 logger.warning("Failed to destroy old session %s, ignoring", current.session_id)
-        ctx.session_manager.destroy_session(current.session_id)
-        router._session_locks.pop(current.session_id, None)
+        try:
+            ctx.session_manager.destroy_session(current.session_id)
+        finally:
+            router._session_locks.pop(current.session_id, None)
 
     await router._reply(
         ctx.message,

@@ -43,11 +43,23 @@ class Context:
     session: Optional["ManagedSession"] = None
     agent: Optional["BaseAgent"] = None
     response: str = ""
-    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 # Type alias for a middleware function
 Middleware = Callable[[Context, Callable[[], Awaitable[None]]], Awaitable[None]]
+
+
+def _make_handler(mw: Middleware, next_handler: Callable, ctx: Context) -> Callable:
+    """Create a handler closure that calls *mw* with *next_handler*.
+
+    Using a named function (instead of a lambda in a loop) avoids the
+    classic late-binding closure bug.
+    """
+
+    async def handler() -> None:
+        await mw(ctx, next_handler)
+
+    return handler
 
 
 class Pipeline:
@@ -66,15 +78,6 @@ class Pipeline:
         # mw[0] wraps mw[1] wraps … wraps _noop.
         handler = _noop
         for mw in reversed(self.middlewares):
-            # Capture *mw* and *handler* in the closure's default args
-            # to avoid the classic late-binding issue.
-            async def _wrap(ctx: Context, _mw=mw, _next=handler) -> None:
-                await _mw(ctx, _next)
+            handler = _make_handler(mw, handler, ctx)
 
-            handler = lambda _ctx=ctx, _w=_wrap: _w(_ctx)  # noqa: E731
-
-        try:
-            await handler()
-        except Exception:
-            logger.error("Pipeline error for user=%s", ctx.user_id, exc_info=True)
-            raise
+        await handler()

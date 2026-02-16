@@ -60,13 +60,15 @@ async def handle_kill(ctx: "Context") -> None:
     if agent:
         try:
             await agent.destroy_session(current.session_id)
-        except Exception:
+        except Exception as e:
             import logging
             logging.getLogger(__name__).warning(
-                "Agent session %s already gone, cleaning up metadata only", current.session_id
+                "Failed to destroy agent session %s: %s, cleaning up metadata only", current.session_id, e
             )
-    ctx.session_manager.destroy_session(current.session_id)
-    ctx.router._session_locks.pop(current.session_id, None)
+    try:
+        ctx.session_manager.destroy_session(current.session_id)
+    finally:
+        ctx.router._session_locks.pop(current.session_id, None)
     await ctx.router._reply(ctx.message, f"🗑️ 已销毁会话 {current.session_id}")
 
 

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from typing import AsyncIterator, TYPE_CHECKING
+from typing import AsyncIterator, Optional, TYPE_CHECKING
 
 from core.formatter import OutputFormatter
 from utils.constants import STREAM_UPDATE_INTERVAL
@@ -26,8 +27,8 @@ class StreamingDelivery:
     Supports:
     * Idle timeout — if no new chunk arrives for *idle_timeout* seconds
       the stream is considered stalled and delivery stops.
-    * Cancel event — ``ctx.cancel_event`` can be set from a ``/cancel``
-      command to interrupt the stream.
+    * Cancel event — ``router._cancel_events[session_id]`` can be set
+      from a ``/cancel`` command to interrupt the stream.
     """
 
     def __init__(self, formatter: OutputFormatter) -> None:
@@ -37,35 +38,54 @@ class StreamingDelivery:
         self,
         ctx: "Context",
         chunks: AsyncIterator[str],
+        session_id: str,
         idle_timeout: float = 300.0,
     ) -> str:
         """Stream *chunks* to the channel and return the full response text."""
 
+        # Get (or create) a cancel event shared via the Router so that
+        # a /cancel command on a separate message can signal this stream.
+        cancel_event: asyncio.Event = ctx.router._cancel_events.setdefault(
+            session_id, asyncio.Event()
+        )
+
         use_streaming = getattr(ctx.channel, "supports_streaming", True)
-        buffer = ""
 
         if use_streaming:
-            response = await self._stream_mode(ctx, chunks, buffer, idle_timeout)
+            response = await self._stream_mode(ctx, chunks, cancel_event, idle_timeout)
         else:
-            response = await self._batch_mode(ctx, chunks, buffer, idle_timeout)
+            response = await self._batch_mode(ctx, chunks, cancel_event, idle_timeout)
+
+        # Clean up cancel event after delivery
+        ctx.router._cancel_events.pop(session_id, None)
 
         return response
 
     # ── private helpers ────────────────────────────────────────
 
     async def _stream_mode(
-        self, ctx: "Context", chunks: AsyncIterator[str], buffer: str, idle_timeout: float
+        self,
+        ctx: "Context",
+        chunks: AsyncIterator[str],
+        cancel_event: asyncio.Event,
+        idle_timeout: float,
     ) -> str:
+        buffer = ""
         message_id = None
         last_update = 0.0
+        last_chunk_time = time.time()
 
         async for chunk in chunks:
-            if ctx.cancel_event.is_set():
+            if cancel_event.is_set():
                 logger.info("Stream cancelled for user=%s", ctx.user_id)
+                break
+            now = time.time()
+            if now - last_chunk_time > idle_timeout:
+                logger.warning("Stream idle timeout (%.0fs) for user=%s", idle_timeout, ctx.user_id)
                 break
             if chunk:
                 buffer += chunk
-                now = time.time()
+                last_chunk_time = now
                 if now - last_update >= STREAM_UPDATE_INTERVAL:
                     if message_id is None:
                         message_id = await ctx.channel.send_text(
@@ -89,13 +109,25 @@ class StreamingDelivery:
         return response
 
     async def _batch_mode(
-        self, ctx: "Context", chunks: AsyncIterator[str], buffer: str, idle_timeout: float
+        self,
+        ctx: "Context",
+        chunks: AsyncIterator[str],
+        cancel_event: asyncio.Event,
+        idle_timeout: float,
     ) -> str:
+        buffer = ""
+        last_chunk_time = time.time()
+
         async for chunk in chunks:
-            if ctx.cancel_event.is_set():
+            if cancel_event.is_set():
+                break
+            now = time.time()
+            if now - last_chunk_time > idle_timeout:
+                logger.warning("Stream idle timeout (%.0fs) for user=%s", idle_timeout, ctx.user_id)
                 break
             if chunk:
                 buffer += chunk
+                last_chunk_time = now
 
         response = self.formatter.clean(buffer) or "✅ 完成"
         for part in self.formatter.split_message(response):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import shutil
@@ -58,7 +59,8 @@ class Router:
 
         self._user_agent_pref: Dict[str, str] = {}
         self._user_model_pref: Dict[str, str] = {}
-        self._session_locks: Dict[str, object] = {}  # session_id → asyncio.Lock
+        self._session_locks: Dict[str, asyncio.Lock] = {}
+        self._cancel_events: Dict[str, asyncio.Event] = {}  # session_id → cancel signal
 
         self.pipeline = self._build_pipeline()
 
@@ -98,7 +100,14 @@ class Router:
             formatter=self.formatter,
             config=self.config,
         )
-        await self.pipeline.execute(ctx)
+        try:
+            await self.pipeline.execute(ctx)
+        except Exception:
+            logger.error("Unhandled error processing message from user=%s", message.user_id, exc_info=True)
+            try:
+                await self.channel.send_text(message.chat_id, "❌ 内部错误，请稍后重试")
+            except Exception:
+                pass  # channel itself might be broken
 
     # ── Helpers (used by middlewares and commands) ──────────────
 
