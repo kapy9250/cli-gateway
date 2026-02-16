@@ -22,8 +22,8 @@ class TestMessageQueuing:
         fake_channel.sent.clear()
         await router.handle_message(make_message(text="queued message"))
         text = fake_channel.last_sent_text()
-        # Should indicate queued, not just rejected
-        assert "排队" in text or "队列" in text or "处理中" in text
+        # Should indicate busy / try later
+        assert "处理中" in text or "稍后" in text
 
         router._session_locks[sid].release()
 

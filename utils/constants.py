@@ -36,9 +36,6 @@ GATEWAY_COMMANDS = frozenset({
     '/history',
 })
 
-# ── Auto-retry ──
-MAX_AGENT_RETRIES = 1  # Number of automatic retries on transient agent failure
-
 # ── History ──
 MAX_HISTORY_ENTRIES = 20  # Max prompt/response pairs to keep per session
 

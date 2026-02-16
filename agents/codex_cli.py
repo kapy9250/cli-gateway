@@ -87,7 +87,8 @@ class CodexAgent(BaseAgent):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                
+                self._processes[session_id] = process
+
                 # Stream stdout in real-time
                 start_time = time.time()
                 stderr_task = asyncio.create_task(process.stderr.read())
@@ -159,12 +160,23 @@ class CodexAgent(BaseAgent):
                 yield error_msg
         
         finally:
+            self._processes.pop(session_id, None)
             session.is_busy = False
             session.last_active = time.time()
-    
+
     async def cancel(self, session_id: str):
-        """Cancel current operation (not implemented)"""
-        logger.warning(f"Cancel not implemented for session {session_id}")
+        """Cancel current operation by killing the subprocess."""
+        process = self._processes.get(session_id)
+        if process and process.returncode is None:
+            try:
+                process.kill()
+                await process.wait()
+                logger.info(f"Cancelled Codex process for session {session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to kill Codex process for session {session_id}: {e}")
+        session = self.sessions.get(session_id)
+        if session:
+            session.is_busy = False
     
     async def destroy_session(self, session_id: str):
         """Destroy session"""

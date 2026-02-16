@@ -62,6 +62,7 @@ class BaseAgent(ABC):
         self.workspace_base.mkdir(parents=True, exist_ok=True)
         self.sessions: Dict[str, SessionInfo] = {}
         self._last_usage: Dict[str, UsageInfo] = {}
+        self._processes: Dict[str, Any] = {}  # session_id -> running subprocess
     
     @staticmethod
     def init_workspace(work_dir: Path) -> None:

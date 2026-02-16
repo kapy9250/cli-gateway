@@ -235,8 +235,12 @@ class SessionManager:
         self._save()
         return True
 
-    def add_history(self, session_id: str, role: str, content: str, max_entries: int = 20) -> None:
-        """Append a history entry (prompt or response) to the session."""
+    def add_history(self, session_id: str, role: str, content: str, max_entries: int = 20, persist: bool = True) -> None:
+        """Append a history entry (prompt or response) to the session.
+
+        Args:
+            persist: If False, skip disk write (caller must call touch() or _save() later).
+        """
         session = self.sessions.get(session_id)
         if session is None:
             return
@@ -245,7 +249,8 @@ class SessionManager:
         max_items = max_entries * 2
         if len(session.history) > max_items:
             session.history = session.history[-max_items:]
-        self._save()
+        if persist:
+            self._save()
 
     def get_history(self, session_id: str) -> List[Dict[str, str]]:
         """Get conversation history for a session."""

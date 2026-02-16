@@ -14,7 +14,7 @@ from core.auth import Auth
 from core.billing import BillingTracker
 from core.rules import RulesLoader
 from core.session import SessionManager
-from utils.constants import GATEWAY_COMMANDS, MAX_ATTACHMENT_SIZE_BYTES, MAX_AGENT_RETRIES, MAX_HISTORY_ENTRIES, STREAM_UPDATE_INTERVAL
+from utils.constants import GATEWAY_COMMANDS, MAX_ATTACHMENT_SIZE_BYTES, MAX_HISTORY_ENTRIES, STREAM_UPDATE_INTERVAL
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,6 @@ class Router:
         self._user_agent_pref: Dict[str, str] = {}
         self._user_model_pref: Dict[str, str] = {}
         self._session_locks: Dict[str, asyncio.Lock] = {}
-        self._message_queues: Dict[str, asyncio.Queue] = {}
 
     @staticmethod
     def _fmt(channel: str, text: str) -> str:
@@ -513,7 +512,7 @@ class Router:
         lock = self._session_locks[session_id]
 
         if lock.locked():
-            await self.channel.send_text(message.chat_id, "⏳ 消息已排队，上一个请求处理中，请稍候")
+            await self.channel.send_text(message.chat_id, "⏳ 上一个请求还在处理中，请稍后再试")
             return
 
         async with lock:
@@ -524,31 +523,18 @@ class Router:
             if message.channel == "email" and hasattr(self.channel, 'set_reply_session'):
                 self.channel.set_reply_session(message.chat_id, current.session_id)
 
-            # Record user prompt in history
-            self.session_manager.add_history(current.session_id, "user", message.text or "", MAX_HISTORY_ENTRIES)
+            # Record user prompt in history (defer persist to touch())
+            self.session_manager.add_history(current.session_id, "user", message.text or "", MAX_HISTORY_ENTRIES, persist=False)
 
-            # Auto-retry on transient failure
-            response = None
-            last_error = None
-            for attempt in range(MAX_AGENT_RETRIES + 1):
-                try:
-                    response = await self._deliver_response(message, agent, current, prompt)
-                    break
-                except Exception as e:
-                    last_error = e
-                    logger.warning("Agent error (attempt %d/%d): %s", attempt + 1, MAX_AGENT_RETRIES + 1, e)
-                    if attempt < MAX_AGENT_RETRIES:
-                        logger.info("Retrying...")
-                        continue
-
-            if response is None:
-                # All retries exhausted — send user-friendly error
-                logger.error("Agent failed after %d attempts: %s", MAX_AGENT_RETRIES + 1, last_error)
+            try:
+                response = await self._deliver_response(message, agent, current, prompt)
+            except Exception as e:
+                logger.error("Agent error: %s", e, exc_info=True)
                 response = "❌ 处理请求时出错，请稍后重试"
                 await self.channel.send_text(message.chat_id, response)
 
-            # Record assistant response in history
-            self.session_manager.add_history(current.session_id, "assistant", response or "", MAX_HISTORY_ENTRIES)
+            # Record assistant response in history (defer persist to touch())
+            self.session_manager.add_history(current.session_id, "assistant", response or "", MAX_HISTORY_ENTRIES, persist=False)
 
             self.session_manager.touch(current.session_id)
             self._record_usage(message, agent, current, response or "")
