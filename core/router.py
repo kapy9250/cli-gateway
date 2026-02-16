@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -12,6 +13,7 @@ from agents.base import BaseAgent, SessionInfo
 from channels.base import BaseChannel, IncomingMessage
 from core.auth import Auth
 from core.billing import BillingTracker
+from core.formatter import OutputFormatter
 from core.rules import RulesLoader
 from core.session import SessionManager
 from utils.constants import GATEWAY_COMMANDS, MAX_ATTACHMENT_SIZE_BYTES, MAX_HISTORY_ENTRIES, STREAM_UPDATE_INTERVAL
@@ -38,6 +40,7 @@ class Router:
         self.config = config
         self.billing = billing
         self.rules_loader = RulesLoader()
+        self.formatter = OutputFormatter(config.get('formatter', {}))
         configured_default = config.get('default_agent', 'codex')
         self.default_agent = configured_default if configured_default in agents else next(iter(agents.keys()))
         if self.default_agent != configured_default:
@@ -57,7 +60,6 @@ class Router:
         if channel == "telegram":
             return text
         # Discord / Email / others → Markdown
-        import re
         t = text
         t = re.sub(r'<b>(.*?)</b>', r'**\1**', t)
         t = re.sub(r'<code>(.*?)</code>', r'`\1`', t)
@@ -70,9 +72,13 @@ class Router:
 
     async def handle_message(self, message: IncomingMessage) -> None:
         """Handle one normalized incoming message."""
-        if not self.auth.check(str(message.user_id), channel=message.channel):
-            logger.warning("Unauthorized access: user_id=%s channel=%s", message.user_id, message.channel)
-            await self._reply(message, "⚠️ 未授权访问")
+        allowed, reason = self.auth.check_detailed(str(message.user_id), channel=message.channel)
+        if not allowed:
+            if reason == "rate_limited":
+                await self._reply(message, "⚠️ 请求过于频繁，请稍后再试")
+            else:
+                logger.warning("Unauthorized access: user_id=%s channel=%s", message.user_id, message.channel)
+                await self._reply(message, "⚠️ 未授权访问")
             return
 
         text = (message.text or "").strip()
@@ -197,6 +203,7 @@ class Router:
                     except Exception:
                         logger.warning("Failed to destroy old session %s, ignoring", current.session_id)
                 self.session_manager.destroy_session(current.session_id)
+                self._session_locks.pop(current.session_id, None)
 
             await self._reply(
                 message,
@@ -256,6 +263,7 @@ class Router:
                 except Exception:
                     logger.warning("Agent session %s already gone, cleaning up metadata only", current.session_id)
             self.session_manager.destroy_session(current.session_id)
+            self._session_locks.pop(current.session_id, None)
             await self._reply(message, f"🗑️ 已销毁会话 {current.session_id}")
             return
 
@@ -526,6 +534,7 @@ class Router:
             # Record user prompt in history (defer persist to touch())
             self.session_manager.add_history(current.session_id, "user", message.text or "", MAX_HISTORY_ENTRIES, persist=False)
 
+            response = ""
             try:
                 response = await self._deliver_response(message, agent, current, prompt)
             except Exception as e:
@@ -595,6 +604,7 @@ class Router:
         old_params = current.params.copy() if current.params else {}
 
         self.session_manager.destroy_session(current.session_id)
+        self._session_locks.pop(current.session_id, None)
         info = await agent.create_session(user_id=message.user_id, chat_id=message.chat_id)
         return self.session_manager.create_session(
             user_id=message.user_id,
@@ -687,19 +697,24 @@ class Router:
                             await self.channel.edit_message(message.chat_id, message_id, buffer)
                         last_update_time = current_time
 
-            response = buffer.strip() or "✅ 完成"
+            response = self.formatter.clean(buffer) or "✅ 完成"
+            # Split long messages to respect channel limits
+            parts = self.formatter.split_message(response)
             if message_id is None:
-                await self.channel.send_text(message.chat_id, response)
+                await self.channel.send_text(message.chat_id, parts[0])
             else:
-                await self.channel.edit_message(message.chat_id, message_id, response)
+                await self.channel.edit_message(message.chat_id, message_id, parts[0])
+            for part in parts[1:]:
+                await self.channel.send_text(message.chat_id, part)
         else:
             async for chunk in agent.send_message(
                 current.session_id, prompt, model=current.model, params=current.params
             ):
                 if chunk:
                     buffer += chunk
-            response = buffer.strip() or "✅ 完成"
-            await self.channel.send_text(message.chat_id, response)
+            response = self.formatter.clean(buffer) or "✅ 完成"
+            for part in self.formatter.split_message(response):
+                await self.channel.send_text(message.chat_id, part)
 
         return response
 

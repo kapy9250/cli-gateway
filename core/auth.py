@@ -73,21 +73,36 @@ class Auth:
             channel: Channel name ("telegram", "discord", "email").
                      If None, checks if user is allowed on *any* channel.
         """
+        allowed, _ = self.check_detailed(user_id, channel)
+        return allowed
+
+    def check_detailed(self, user_id: str, channel: Optional[str] = None) -> tuple:
+        """
+        Check authorization and return (allowed: bool, reason: str|None).
+
+        Reason is None if allowed, "unauthorized" if not in whitelist,
+        or "rate_limited" if rate limit exceeded.
+        """
         user_id = str(user_id)
 
         if channel:
             allowed_set = self._channel_allowed.get(channel)
             if allowed_set is None:
-                # Channel has no allowlist configured -> deny
                 logger.warning("No allowed_users configured for channel '%s'", channel)
                 is_allowed = False
             else:
                 is_allowed = user_id in allowed_set
         else:
-            # Fallback: allowed on any channel
             is_allowed = any(user_id in s for s in self._channel_allowed.values())
 
-        if is_allowed and self.max_requests_per_minute > 0:
+        if not is_allowed:
+            logger.warning(
+                "Unauthorized access: user_id=%s channel=%s",
+                user_id, channel,
+            )
+            return False, "unauthorized"
+
+        if self.max_requests_per_minute > 0:
             now = time.time()
             window_start = now - 60
             history = self._request_log[user_id]
@@ -99,17 +114,11 @@ class Auth:
                     "Rate limit exceeded for user_id=%s channel=%s limit=%s/min",
                     user_id, channel, self.max_requests_per_minute,
                 )
-                return False
+                return False, "rate_limited"
 
             history.append(now)
 
-        if not is_allowed:
-            logger.warning(
-                "Unauthorized access: user_id=%s channel=%s",
-                user_id, channel,
-            )
-
-        return is_allowed
+        return True, None
 
     # ── mutation helpers ──
 

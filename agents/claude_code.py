@@ -57,7 +57,7 @@ class ClaudeCodeAgent(BaseAgent):
     async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:
         """Create new Claude Code session"""
         # Generate session ID
-        session_id = str(uuid.uuid4())  # 8 hex chars
+        session_id = str(uuid.uuid4())  # Full UUID string
 
         # Create workspace with standard directory structure
         work_dir = self.workspace_base / f"sess_{session_id}"

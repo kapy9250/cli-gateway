@@ -216,6 +216,15 @@ async def main():
         for channel_name, channel in channels:
             await channel.stop()
             logger.info(f"✅ {channel_name} stopped")
+
+        # Kill all running agent subprocesses
+        for agent_name, agent in agents.items():
+            for sid in list(agent.sessions.keys()):
+                try:
+                    await agent.destroy_session(sid)
+                    logger.info(f"✅ Destroyed {agent_name} session {sid}")
+                except Exception as e:
+                    logger.warning(f"Failed to destroy {agent_name} session {sid}: {e}")
         logger.info("✅ Shutdown complete")
     
     except Exception as e:
