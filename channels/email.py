@@ -26,12 +26,9 @@ from pathlib import Path
 from typing import Optional, List, Set
 
 from channels.base import BaseChannel, IncomingMessage, Attachment
+from utils.constants import SESSION_MARKER_TEMPLATE, SESSION_MARKER_RE
 
 logger = logging.getLogger(__name__)
-
-# Marker pattern embedded in reply emails so the next reply can resume the session.
-# Format: [Session: <hex-session-id>]
-_SESSION_MARKER_RE = re.compile(r'\[Session:\s*([a-f0-9-]{6,})\]', re.IGNORECASE)
 
 
 def _sanitize_dirname(addr: str) -> str:
@@ -148,11 +145,11 @@ class EmailChannel(BaseChannel):
     def _extract_session_hint(body: str) -> Optional[str]:
         """Extract session ID from email body (including quoted reply text).
 
-        Looks for the marker ``[Session: <id>]`` that we embed in outgoing
-        replies.  Returns the first match, which corresponds to the most
-        recent reply in the thread.
+        Looks for the HTML-comment marker ``<!-- clawdbot-session:<id> -->``
+        that we embed in outgoing replies.  Returns the first match, which
+        corresponds to the most recent reply in the thread.
         """
-        m = _SESSION_MARKER_RE.search(body)
+        m = SESSION_MARKER_RE.search(body)
         return m.group(1) if m else None
 
     def save_session_log(self, sender_addr: str, session_id: str,
@@ -212,10 +209,13 @@ class EmailChannel(BaseChannel):
                 msg['In-Reply-To'] = refs.get('message_id', '')
                 msg['References'] = refs.get('references', '')
 
-            # Append session marker so the recipient can reply to continue
+            # Append session marker so the recipient can reply to continue.
+            # Uses an HTML comment — invisible in rendered email, impossible to
+            # accidentally type, and survives quoted-reply chains.
             session_id = self._reply_session_id.pop(chat_id, None)
             if session_id:
-                text += f"\n\n[Session: {session_id}]"
+                marker = SESSION_MARKER_TEMPLATE.format(session_id=session_id)
+                text += f"\n\n{marker}"
 
             # Build body with quoted original
             original_body = refs.get('original_body', '') if refs else ''

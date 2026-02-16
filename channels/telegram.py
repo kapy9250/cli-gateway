@@ -1,6 +1,7 @@
 """
 Telegram channel implementation
 """
+import asyncio
 import logging
 import os
 import re
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Optional, Callable, Awaitable, List
 
 from telegram import Update, Document, PhotoSize
+from telegram.error import RetryAfter, BadRequest, TimedOut
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 
@@ -69,7 +71,7 @@ class TelegramChannel(BaseChannel):
         text = text.replace("&lt;", "<").replace("&gt;", ">")
         text = text.replace("&amp;", "&")
         text = re.sub(r'<[^>]+>', '', text)
-        text = re.sub(r'[*_`\[\]()~>#+\-=|{}.!]', '', text)
+        text = re.sub(r'[*_`~]', '', text)
         return text
 
     async def send_text(self, chat_id: str, text: str) -> Optional[int]:
@@ -141,36 +143,59 @@ class TelegramChannel(BaseChannel):
             logger.error(f"Failed to send typing indicator: {e}")
     
     async def edit_message(self, chat_id: str, message_id: int, text: str):
-        """Edit an existing message"""
+        """Edit an existing message with retry on rate-limit / transient errors."""
         if not self.app:
             logger.error("Cannot edit message: bot not started")
             return
-        
+
         # Clean and format
         text = self.formatter.clean(text)
-        
+
         # Telegram has a 4096 character limit for edits
         if len(text) > self.max_length:
             text = text[:self.max_length - 20] + "\n\n[输出过长，已截断]"
-        
-        try:
-            await self.app.bot.edit_message_text(
-                chat_id=int(chat_id),
-                message_id=message_id,
-                text=text,
-                parse_mode=self.parse_mode
-            )
-        except Exception as e:
-            logger.error(f"Failed to edit message: {e}")
-            # If edit fails, try plain text without parse mode
+
+        max_retries = 3
+        use_plain = False
+        for attempt in range(max_retries):
+            send_text = self._strip_markup_for_plain(text) if use_plain else text
+            send_mode = None if use_plain else self.parse_mode
             try:
                 await self.app.bot.edit_message_text(
                     chat_id=int(chat_id),
                     message_id=message_id,
-                    text=self._strip_markup_for_plain(text)
+                    text=send_text,
+                    parse_mode=send_mode
                 )
-            except:
-                logger.error(f"Failed to edit message even without parse mode")
+                return
+            except RetryAfter as e:
+                logger.warning("Rate limited on edit, retrying after %ss", e.retry_after)
+                await asyncio.sleep(e.retry_after)
+            except BadRequest as e:
+                if "message is not modified" in str(e).lower():
+                    return  # Content unchanged — not an error
+                if attempt < max_retries - 1:
+                    use_plain = True
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.error("Failed to edit message after %d attempts: %s", max_retries, e)
+            except TimedOut:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1)
+                else:
+                    logger.error("Timed out editing message after %d attempts", max_retries)
+            except Exception as e:
+                logger.error("Failed to edit message: %s", e)
+                if not use_plain:
+                    try:
+                        await self.app.bot.edit_message_text(
+                            chat_id=int(chat_id),
+                            message_id=message_id,
+                            text=self._strip_markup_for_plain(text)
+                        )
+                    except Exception:
+                        logger.error("Failed to edit message even without parse mode")
+                return
     
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming message"""

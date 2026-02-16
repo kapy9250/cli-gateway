@@ -40,6 +40,7 @@ class DiscordChannel(BaseChannel):
         })
 
         self.bot_id: Optional[int] = None
+        self._channel_cache: dict = {}  # chat_id -> channel object
         self._setup_events()
 
         logger.info("DiscordChannel initialized")
@@ -58,8 +59,10 @@ class DiscordChannel(BaseChannel):
 
     async def start(self):
         """Start Discord bot (non-blocking)"""
-        self._run_task = asyncio.create_task(self.client.start(self.token))
-        # Wait until ready
+        # Login first, then launch the websocket connection as a background task
+        await self.client.login(self.token)
+        self._run_task = asyncio.create_task(self.client.connect())
+        # Wait until the READY event fires
         await self.client.wait_until_ready()
         logger.info("Discord bot started")
 
@@ -69,9 +72,23 @@ class DiscordChannel(BaseChannel):
             await self.client.close()
             logger.info("Discord bot stopped")
 
+    async def _resolve_channel(self, chat_id: str):
+        """Resolve channel by ID: local cache → client cache → API fetch."""
+        cid = int(chat_id)
+        ch = self._channel_cache.get(cid) or self.client.get_channel(cid)
+        if ch:
+            return ch
+        try:
+            ch = await self.client.fetch_channel(cid)
+            self._channel_cache[cid] = ch
+            return ch
+        except Exception as e:
+            logger.error(f"Failed to fetch channel {chat_id}: {e}")
+            return None
+
     async def send_text(self, chat_id: str, text: str) -> Optional[int]:
         """Send text message with automatic pagination. Returns message_id of first chunk."""
-        channel = self.client.get_channel(int(chat_id))
+        channel = await self._resolve_channel(chat_id)
         if not channel:
             logger.error(f"Channel {chat_id} not found")
             return None
@@ -95,7 +112,7 @@ class DiscordChannel(BaseChannel):
 
     async def send_file(self, chat_id: str, filepath: str, caption: str = ""):
         """Send file attachment"""
-        channel = self.client.get_channel(int(chat_id))
+        channel = await self._resolve_channel(chat_id)
         if not channel:
             logger.error(f"Channel {chat_id} not found")
             return
@@ -108,7 +125,7 @@ class DiscordChannel(BaseChannel):
 
     async def send_typing(self, chat_id: str):
         """Send typing indicator"""
-        channel = self.client.get_channel(int(chat_id))
+        channel = await self._resolve_channel(chat_id)
         if not channel:
             return
 
@@ -119,7 +136,7 @@ class DiscordChannel(BaseChannel):
 
     async def edit_message(self, chat_id: str, message_id: int, text: str):
         """Edit an existing message"""
-        channel = self.client.get_channel(int(chat_id))
+        channel = await self._resolve_channel(chat_id)
         if not channel:
             logger.error(f"Channel {chat_id} not found")
             return
@@ -144,6 +161,9 @@ class DiscordChannel(BaseChannel):
         if message.author.bot:
             return
 
+        # Cache the channel object for later send_text lookups
+        self._channel_cache[message.channel.id] = message.channel
+
         # Guild filtering
         if self.allowed_guilds and message.guild:
             if message.guild.id not in self.allowed_guilds:
@@ -166,7 +186,7 @@ class DiscordChannel(BaseChannel):
         # In guilds, only respond to mentions, replies, or commands
         if not is_dm and not is_mention and not is_reply_to_bot:
             text = message.content or ""
-            if not text.startswith("/") and not text.lower().startswith("kapybara "):
+            if not text.startswith("/") and not text.lower().startswith("kapy "):
                 return
 
         # Process attachments

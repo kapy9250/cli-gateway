@@ -142,6 +142,10 @@ class SessionManager:
         user = str(user_id)
         return [s for s in self.sessions.values() if s.user_id == user]
 
+    def list_all_sessions(self) -> List[ManagedSession]:
+        """List all sessions across all users."""
+        return list(self.sessions.values())
+
     def get_active_session(self, user_id: str) -> Optional[ManagedSession]:
         """Get active session for user."""
         session_id = self.active_by_user.get(str(user_id))

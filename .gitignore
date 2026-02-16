@@ -45,3 +45,12 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Backup files
+*.bak
+
+# Runtime output
+startup.out
+
+# Data directory
+data/

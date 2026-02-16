@@ -6,6 +6,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 from pathlib import Path
 
 from utils.helpers import load_config
@@ -19,6 +20,7 @@ from agents.gemini_cli import GeminiAgent
 from channels.telegram import TelegramChannel
 from channels.discord import DiscordChannel
 from channels.email import EmailChannel
+from aiohttp import web
 
 
 # Configure logging
@@ -170,8 +172,31 @@ async def main():
         for channel_name, channel in channels:
             await channel.start()
             logger.info(f"✅ {channel_name} channel started")
+
+        # Start health-check HTTP server
+        start_time = time.time()
+        health_port = config.get('health', {}).get('port', 18800)
+
+        async def health_handler(request):
+            return web.json_response({
+                "status": "ok",
+                "uptime_seconds": round(time.time() - start_time, 1),
+                "active_sessions": len(session_manager.list_all_sessions()),
+                "agents": list(agents.keys()),
+                "channels": [name for name, _ in channels],
+            })
+
+        health_app = web.Application()
+        health_app.router.add_get("/health", health_handler)
+        health_runner = web.AppRunner(health_app)
+        await health_runner.setup()
+        health_host = config.get('health', {}).get('host', '127.0.0.1')
+        health_site = web.TCPSite(health_runner, health_host, health_port)
+        await health_site.start()
+        logger.info("✅ Health endpoint listening on :%d/health", health_port)
+
         logger.info("🚀 CLI Gateway is running")
-        
+
         # Wait for shutdown signal
         shutdown_event = asyncio.Event()
         
@@ -187,6 +212,7 @@ async def main():
         
         # Shutdown all channels
         logger.info("Shutting down...")
+        await health_runner.cleanup()
         for channel_name, channel in channels:
             await channel.stop()
             logger.info(f"✅ {channel_name} stopped")

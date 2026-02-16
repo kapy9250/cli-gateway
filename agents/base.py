@@ -116,6 +116,41 @@ class BaseAgent(ABC):
         d.mkdir(parents=True, exist_ok=True)
         return d
     
+    def _resolve_model(self, model_alias: Optional[str]) -> str:
+        """Resolve a model alias to its full name using config['models']."""
+        if not model_alias:
+            return ""
+        models = self.config.get('models', {})
+        return models.get(model_alias, model_alias)
+
+    def _build_args(self, message: str, session_id: str,
+                    model: Optional[str] = None, params: Optional[Dict[str, str]] = None) -> List[str]:
+        """Build CLI args from config template, model, and params.
+
+        Handles placeholder substitution ({prompt}, {session_id}),
+        model resolution, and parameter flag mapping.
+        """
+        args_template = self.config.get('args_template', [])
+        args = []
+        for arg in args_template:
+            arg = arg.replace("{prompt}", message)
+            arg = arg.replace("{session_id}", session_id)
+            args.append(arg)
+
+        if model:
+            model_flag = self.config.get('supported_params', {}).get('model')
+            if model_flag:
+                args.extend([model_flag, self._resolve_model(model)])
+
+        if params:
+            supported = self.config.get('supported_params', {})
+            for key, value in params.items():
+                param_flag = supported.get(key)
+                if param_flag:
+                    args.extend([param_flag, str(value)])
+
+        return args
+
     @abstractmethod
     async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:
         """

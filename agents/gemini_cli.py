@@ -64,34 +64,10 @@ class GeminiAgent(BaseAgent):
         session.last_active = time.time()
         
         try:
-            # Build command
+            # Build command using shared arg builder
             command = self.config['command']
-            args_template = self.config.get('args_template', [])
-            
-            # Replace placeholders
-            args = []
-            for arg in args_template:
-                arg = arg.replace("{prompt}", message)
-                arg = arg.replace("{session_id}", session_id)
-                args.append(arg)
-            
-            # Add model parameter if specified
-            if model:
-                model_flag = self.config.get('supported_params', {}).get('model')
-                if model_flag:
-                    # Get full model name from alias
-                    models = self.config.get('models', {})
-                    model_full = models.get(model, model)  # Fallback to alias if not found
-                    args.extend([model_flag, model_full])
-            
-            # Add custom parameters
-            if params:
-                supported = self.config.get('supported_params', {})
-                for key, value in params.items():
-                    param_flag = supported.get(key)
-                    if param_flag:
-                        args.extend([param_flag, str(value)])
-            
+            args = self._build_args(message, session_id, model=model, params=params)
+
             # Environment
             env = os.environ.copy()
             env.update(self.config.get('env', {}))

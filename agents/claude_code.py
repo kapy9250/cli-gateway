@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import AsyncIterator, Dict, Optional
 
 from agents.base import BaseAgent, SessionInfo, UsageInfo
+from utils.constants import CLI_OUTPUT_FORMAT_FLAG, CLI_OUTPUT_FORMAT_JSON
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,9 @@ class ClaudeCodeAgent(BaseAgent):
         super().__init__(name, config, workspace_base)
         # Track running subprocesses per session for cleanup
         self._processes: Dict[str, asyncio.subprocess.Process] = {}
+        # Track which sessions have sent their first message
+        # (first call uses --session-id, subsequent calls use --resume)
+        self._initialized_sessions: set = set()
 
     # ── process lifecycle helpers ──
 
@@ -97,25 +101,34 @@ class ClaudeCodeAgent(BaseAgent):
             args_template = self.config.get('args_template', [])
 
             # Replace placeholders and force --output-format json
+            # First call uses --session-id, subsequent calls use --resume
+            is_resume = session_id in self._initialized_sessions
             args = []
             skip_next = False
             for i, arg in enumerate(args_template):
                 if skip_next:
                     skip_next = False
                     continue
-                if arg == "--output-format":
-                    # Replace the format value with json
-                    args.append("--output-format")
-                    args.append("json")
+                if arg == CLI_OUTPUT_FORMAT_FLAG:
+                    args.append(CLI_OUTPUT_FORMAT_FLAG)
+                    args.append(CLI_OUTPUT_FORMAT_JSON)
                     skip_next = True
+                    continue
+                if arg == "--session-id":
+                    if is_resume:
+                        args.append("--resume")
+                    else:
+                        args.append("--session-id")
+                    skip_next = True
+                    args.append(session_id)
                     continue
                 arg = arg.replace("{prompt}", message)
                 arg = arg.replace("{session_id}", session_id)
                 args.append(arg)
 
             # Ensure --output-format json is present
-            if "--output-format" not in args:
-                args.extend(["--output-format", "json"])
+            if CLI_OUTPUT_FORMAT_FLAG not in args:
+                args.extend([CLI_OUTPUT_FORMAT_FLAG, CLI_OUTPUT_FORMAT_JSON])
 
             # Add model parameter if specified
             resolved_model = ""
@@ -204,6 +217,9 @@ class ClaudeCodeAgent(BaseAgent):
                 if result_text:
                     yield result_text
 
+                # Mark session as initialized (subsequent calls use --resume)
+                self._initialized_sessions.add(session_id)
+
                 # Extract usage info for billing
                 usage = data.get('usage', {})
                 model_usage = data.get('modelUsage', {})
@@ -258,8 +274,9 @@ class ClaudeCodeAgent(BaseAgent):
         # Kill any running process first
         await self.kill_process(session_id)
 
-        # Remove from sessions dict
+        # Remove from sessions dict and initialized set
         del self.sessions[session_id]
+        self._initialized_sessions.discard(session_id)
 
         logger.info(f"Destroyed session {session_id} (workspace retained at {session.work_dir})")
 
