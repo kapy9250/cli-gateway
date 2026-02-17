@@ -7,6 +7,7 @@ This runbook validates multi-instance deployment, dual permission modes, 2FA flo
 ```bash
 python main.py --config config.yaml --validate-only
 python main.py --config config.yaml --instance-id canary --namespace-paths --validate-only
+python system_service_main.py --config config.yaml --validate-only
 ```
 
 Expected:
@@ -18,23 +19,26 @@ Expected:
 ```bash
 sudo systemd-analyze verify /etc/systemd/system/cli-gateway-session@.service
 sudo systemd-analyze verify /etc/systemd/system/cli-gateway-system@.service
+sudo systemd-analyze verify /etc/systemd/system/cli-gateway-sys-executor@.service
 ```
 
 Expected:
 - no syntax errors
 
-## 3) Start Session + System Instances
+## 3) Start Session + Ops + Executor Instances
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now cli-gateway-session@bot-a
 sudo systemctl enable --now cli-gateway-system@ops-a
+sudo systemctl enable --now cli-gateway-sys-executor@ops-a
 sudo systemctl status cli-gateway-session@bot-a --no-pager -l
 sudo systemctl status cli-gateway-system@ops-a --no-pager -l
+sudo systemctl status cli-gateway-sys-executor@ops-a --no-pager -l
 ```
 
 Expected:
-- both services active
+- all services active
 - separate config/state/workspace/log paths
 
 ## 4) Identity & Mode Gate
@@ -106,6 +110,7 @@ Suggested checks:
 ```bash
 journalctl -u cli-gateway-session@bot-a -n 200 --no-pager
 journalctl -u cli-gateway-system@ops-a -n 200 --no-pager
+journalctl -u cli-gateway-sys-executor@ops-a -n 200 --no-pager
 ```
 
 ## 10) Rollback
@@ -113,6 +118,7 @@ journalctl -u cli-gateway-system@ops-a -n 200 --no-pager
 ```bash
 sudo systemctl disable --now cli-gateway-system@ops-a
 sudo systemctl disable --now cli-gateway-session@bot-a
+sudo systemctl disable --now cli-gateway-sys-executor@ops-a
 # deploy previous release
 sudo systemctl daemon-reload
 sudo systemctl enable --now cli-gateway-session@bot-a

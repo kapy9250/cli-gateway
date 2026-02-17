@@ -131,6 +131,8 @@ def print_runtime_summary(config: dict, args) -> None:
     print(f"billing.dir: {config.get('billing', {}).get('dir')}")
     print(f"logging.file: {config.get('logging', {}).get('file')}")
     print(f"logging.audit.file: {config.get('logging', {}).get('audit', {}).get('file')}")
+    print(f"system_service.enabled: {config.get('system_service', {}).get('enabled', False)}")
+    print(f"system_service.socket_path: {config.get('system_service', {}).get('socket_path')}")
     print(f"health.port: {config.get('health', {}).get('port', 18800)}")
 
 
@@ -214,7 +216,9 @@ async def main(argv=None):
     from core.session import SessionManager
     from core.router import Router
     from core.two_factor import TwoFactorManager
+    from core.system_client import SystemServiceClient
     from core.system_executor import SystemExecutor
+    from core.system_grant import SystemGrantManager
     from agents.claude_code import ClaudeCodeAgent
     from agents.codex_cli import CodexAgent
     from agents.gemini_cli import GeminiAgent
@@ -255,6 +259,27 @@ async def main(argv=None):
         system_ops_conf = config.get('system_ops', {})
         system_executor = SystemExecutor(system_ops_conf)
         logger.info("✅ System executor initialized (enabled=%s)", system_executor.enabled)
+
+        system_service_conf = config.get("system_service", {})
+        system_client = None
+        system_grant = None
+        if bool(system_service_conf.get("enabled", False)):
+            socket_path = str(system_service_conf.get("socket_path", "/run/cli-gateway/system.sock"))
+            timeout_seconds = float(system_service_conf.get("timeout_seconds", 10.0))
+            system_client = SystemServiceClient(socket_path=socket_path, timeout_seconds=timeout_seconds)
+
+            grant_secret = str(system_service_conf.get("grant_secret", "")).strip()
+            if not grant_secret:
+                logger.error("❌ system_service.enabled=true 但未配置 system_service.grant_secret")
+                sys.exit(1)
+            grant_ttl_seconds = int(system_service_conf.get("grant_ttl_seconds", 60))
+            system_grant = SystemGrantManager(secret=grant_secret, ttl_seconds=grant_ttl_seconds)
+            logger.info(
+                "✅ System service client initialized (socket=%s timeout=%.1fs grant_ttl=%ss)",
+                socket_path,
+                timeout_seconds,
+                grant_ttl_seconds,
+            )
         
         # Agents
         agents = {}
@@ -333,6 +358,8 @@ async def main(argv=None):
                 billing=billing,
                 two_factor=two_factor,
                 system_executor=system_executor,
+                system_client=system_client,
+                system_grant=system_grant,
                 audit_logger=audit_logger,
             )
             channel.set_message_handler(router.handle_message)
@@ -352,6 +379,7 @@ async def main(argv=None):
         print(f"║ Authorized users: {len(auth.allowed_users):2d}                  ║")
         print(f"║ Workspace: {str(workspace_base):24s}║")
         print(f"║ Instance: {runtime.get('instance_id', 'default'):24s}║")
+        print(f"║ System backend: {('remote' if system_client else 'local'):19s}║")
         print("╚════════════════════════════════════════╝")
         
         # Start all channels

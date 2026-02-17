@@ -92,6 +92,13 @@ kapy sys config write /etc/myapp.conf <base64_content>
 kapy sys config rollback /etc/myapp.conf /etc/myapp.conf.bak.20260216_200000
 ```
 
+root 侧 system service（独立进程）：
+
+```bash
+python system_service_main.py --config /etc/cli-gateway/ops-a.yaml --validate-only
+python system_service_main.py --config /etc/cli-gateway/ops-a.yaml
+```
+
 所有 `/sys` 操作会写入审计日志（`logging.audit.file`，JSONL）。
 审计日志默认会对 `text/output/stderr/stdout` 做脱敏，仅记录摘要元数据。
 灰度与上线步骤见：`docs/OPERATIONS_ROLLOUT.md`
@@ -163,25 +170,19 @@ kapy reset             # 重置为默认配置
 ## 🏗️ 架构
 
 ```
-┌─────────────────┐
-│  Telegram Bot   │
-└────────┬────────┘
-         │
-    ┌────▼─────┐
-    │  Router  │
-    └────┬─────┘
-         │
-    ┌────▼─────────┐
-    │ Session Mgr  │
-    └────┬─────────┘
-         │
-    ┌────▼─────┐
-    │  Agents  │
-    │          │
-    │ - Claude │
-    │ - Codex  │
-    │ - Gemini │
-    └──────────┘
+┌──────────────────────────────┐
+│ session/ops gateway (非 root)│
+│ - 白名单鉴权                 │
+│ - 2FA challenge 交互         │
+│ - /sys 指令编排              │
+└───────────────┬──────────────┘
+                │ Unix Socket + grant token
+┌───────────────▼──────────────┐
+│ privileged system service     │
+│ - root 执行器                │
+│ - 验签一次性授权票据          │
+│ - 结构化 action 执行          │
+└──────────────────────────────┘
 ```
 
 **核心组件：**
@@ -189,6 +190,8 @@ kapy reset             # 重置为默认配置
 - **SessionManager** - 会话管理和持久化
 - **Agent** - CLI 工具适配器（Claude Code, Codex, Gemini）
 - **Channel** - 消息平台适配器（Telegram / Discord / Email）
+- **SystemServiceClient** - `/sys` 指令到 root 服务的本地桥接
+- **SystemGrantManager** - 2FA 后签发短时一次性授权票据
 
 ---
 
@@ -246,6 +249,9 @@ python tests/manual_test_bot.py
 - `tests/test_auth.py`
 - `tests/test_system_mode_security.py`
 - `tests/test_system_executor_security.py`
+- `tests/test_system_grant.py`
+- `tests/test_system_service_bridge.py`
+- `tests/test_sys_command_remote_bridge.py`
 
 ---
 

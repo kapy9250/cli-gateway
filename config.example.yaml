@@ -56,6 +56,26 @@ system_ops:
     - "/var"
     - "/usr/local/etc"
 
+# ──────────── Privileged System Service Bridge ────────────
+# enabled=true 时，/sys 命令改为通过本地 Unix Socket 调用 root 侧 system_service_main.py。
+# 2FA 通过后会签发短时授权票据，由 system service 二次验签后执行。
+system_service:
+  enabled: false
+  socket_path: "/run/cli-gateway/system.sock"
+  timeout_seconds: 10
+  grant_secret: "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
+  grant_ttl_seconds: 60
+  request_timeout_seconds: 15
+  max_request_bytes: 131072
+  require_grant_ops:
+    - "cron_upsert"
+    - "cron_delete"
+    - "docker_exec"
+    - "config_write"
+    - "config_append"
+    - "config_delete"
+    - "config_rollback"
+
 # ──────────── 消息通道 ────────────
 # 每个渠道有自己独立的 allowed_users 名单
 # Telegram/Discord: 用户 ID (数字)

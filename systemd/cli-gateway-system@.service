@@ -6,9 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 
-# System mode is intended for privileged operations.
-User=root
-Group=root
+# Ops gateway runs in system mode but stays non-root.
+User=cli-gateway
+Group=cli-gateway
 
 WorkingDirectory=/opt/cli-gateway
 EnvironmentFile=-/etc/cli-gateway/%i.env
@@ -17,11 +17,12 @@ ExecStart=/usr/bin/python3 /opt/cli-gateway/main.py --mode system --instance-id 
 Restart=always
 RestartSec=5
 
-# Keep root defaults explicit for clarity.
-NoNewPrivileges=false
-ProtectSystem=false
-ProtectHome=false
+# Hardening for non-root ops gateway.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
 PrivateTmp=true
+ReadWritePaths=/opt/cli-gateway/workspaces /opt/cli-gateway/data /opt/cli-gateway/logs
 
 StandardOutput=journal
 StandardError=journal
