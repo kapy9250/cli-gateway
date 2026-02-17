@@ -15,6 +15,7 @@ Both templates load:
 - config: `/etc/cli-gateway/%i.yaml`
 - env: `/etc/cli-gateway/%i.env` (optional)
 - runtime flags: `--instance-id %i --namespace-paths`
+- default `CODEX_HOME`: `/opt/cli-gateway/data/codex-home-%i` (override in `%i.env` if needed)
 
 Python runtime behavior:
 - units prefer `/opt/cli-gateway/.venv/bin/python3`
@@ -48,6 +49,7 @@ Notes:
 - Use a dedicated `health.port` per instance to avoid bind conflicts.
 - `telegram-only` is recommended for system ops instances to reduce attack surface.
 - If `cli-gateway.service` (legacy single-instance unit) is present, disable it to avoid token conflicts.
+- For Codex CLI auth, copy/prepare `auth.json` under the configured `CODEX_HOME` and ensure it is readable by the service user.
 
 ## Install
 

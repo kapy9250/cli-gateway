@@ -14,6 +14,8 @@ WorkingDirectory=/opt/cli-gateway
 EnvironmentFile=-/etc/cli-gateway/%i.env
 # Prefer project venv, fallback to system Python if missing.
 Environment=PATH=/opt/cli-gateway/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Keep Codex runtime/state under writable instance-scoped data path.
+Environment=CODEX_HOME=/opt/cli-gateway/data/codex-home-%i
 ExecStart=/usr/bin/env python3 /opt/cli-gateway/main.py --mode session --instance-id %i --config /etc/cli-gateway/%i.yaml --namespace-paths
 
 Restart=always
