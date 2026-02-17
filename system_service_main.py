@@ -110,7 +110,10 @@ async def main(argv=None):
             signal.signal(sig, lambda s, _f: _request_stop(int(s)))
 
     await stop_event.wait()
-    await server.stop()
+    try:
+        await asyncio.wait_for(server.stop(), timeout=10.0)
+    except asyncio.TimeoutError:
+        logger.warning("Timed out waiting for server.stop(); forcing shutdown")
     logger.info("System service stopped")
 
 

@@ -64,10 +64,9 @@ class SystemServiceServer:
 
     async def stop(self) -> None:
         self._stopping = True
-        if self._server:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
+        srv = self._server
+        if srv:
+            srv.close()
 
         # Proactively close active connections so handler tasks can exit quickly.
         writers = list(self._connections)
@@ -79,6 +78,13 @@ class SystemServiceServer:
         if writers:
             await asyncio.gather(*(self._wait_writer_closed(w) for w in writers), return_exceptions=True)
         self._connections.clear()
+
+        if srv:
+            try:
+                await asyncio.wait_for(srv.wait_closed(), timeout=2.0)
+            except Exception:
+                pass
+            self._server = None
 
         sock = Path(self.socket_path)
         if sock.exists():
