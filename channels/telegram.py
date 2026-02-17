@@ -29,6 +29,8 @@ class TelegramChannel(BaseChannel):
         self.token = config['token']
         self.parse_mode = ParseMode.HTML if config.get('parse_mode') == 'HTML' else ParseMode.MARKDOWN_V2
         self.max_length = config.get('max_message_length', 4096)
+        self.enforce_at_sender = config.get('enforce_at_sender', True)
+        self._reply_target: dict = {}
         
         self.app: Optional[Application] = None
         self.bot_id: Optional[int] = None
@@ -79,6 +81,9 @@ class TelegramChannel(BaseChannel):
         if not self.app:
             logger.error("Cannot send message: bot not started")
             return None
+
+        # Enforce @sender in group chats for clear notification routing
+        text = self._apply_required_mention(chat_id, text)
         
         # Clean and format
         text = self.formatter.clean(text)
@@ -111,6 +116,19 @@ class TelegramChannel(BaseChannel):
                     logger.error(f"Failed to send message even without parse mode")
         
         return first_message_id
+
+    def _apply_required_mention(self, chat_id: str, text: str) -> str:
+        if not self.enforce_at_sender:
+            return text
+        target = self._reply_target.get(str(chat_id))
+        if not target or target.get("is_private"):
+            return text
+        mention = target.get("mention")
+        if not mention:
+            return text
+        if mention in text:
+            return text
+        return f"{mention} {text}".strip()
     
     async def send_file(self, chat_id: str, filepath: str, caption: str = ""):
         """Send file"""
@@ -219,6 +237,13 @@ class TelegramChannel(BaseChannel):
                 is_mention_bot = True
 
         # Build IncomingMessage
+        sender = update.effective_user
+        sender_username = sender.username if sender else None
+        sender_display_name = sender.full_name if sender else None
+        sender_mention = f"@{sender_username}" if sender_username else (
+            f'<a href="tg://user?id={sender.id}">{sender_display_name or sender.id}</a>' if sender else None
+        )
+
         msg = IncomingMessage(
             channel="telegram",
             chat_id=str(update.effective_chat.id),
@@ -227,9 +252,14 @@ class TelegramChannel(BaseChannel):
             is_private=update.effective_chat.type == "private",
             is_reply_to_bot=is_reply_to_bot,
             is_mention_bot=is_mention_bot,
+            sender_username=sender_username,
+            sender_display_name=sender_display_name,
+            sender_mention=sender_mention,
             reply_to_text=update.message.reply_to_message.text if update.message.reply_to_message else None,
             attachments=attachments
         )
+
+        self._reply_target[msg.chat_id] = {"mention": sender_mention, "is_private": msg.is_private}
         
         # Group chat filtering
         if not msg.is_private:

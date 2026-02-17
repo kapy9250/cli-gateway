@@ -26,6 +26,8 @@ class DiscordChannel(BaseChannel):
         self.max_length = config.get('max_message_length', 2000)
         self.allowed_guilds = set(config.get('allowed_guilds', []))
         self.allow_bots = config.get('allow_bots', config.get('allowBots', True))
+        self.enforce_at_sender = config.get('enforce_at_sender', True)
+        self._reply_target: dict = {}
 
         # Setup intents
         intents = Intents.default()
@@ -94,6 +96,9 @@ class DiscordChannel(BaseChannel):
             logger.error(f"Channel {chat_id} not found")
             return None
 
+        # Enforce @sender in guild channels for clear notification routing
+        text = self._apply_required_mention(chat_id, text)
+
         # Clean and format
         text = self.formatter.clean(text)
 
@@ -110,6 +115,19 @@ class DiscordChannel(BaseChannel):
                 logger.error(f"Failed to send Discord message: {e}")
 
         return first_message_id
+
+    def _apply_required_mention(self, chat_id: str, text: str) -> str:
+        if not self.enforce_at_sender:
+            return text
+        target = self._reply_target.get(str(chat_id))
+        if not target or target.get("is_private"):
+            return text
+        mention = target.get("mention")
+        if not mention:
+            return text
+        if mention in text:
+            return text
+        return f"{mention} {text}".strip()
 
     async def send_file(self, chat_id: str, filepath: str, caption: str = ""):
         """Send file attachment"""
@@ -197,6 +215,10 @@ class DiscordChannel(BaseChannel):
             text = text.replace(f"<@{self.bot_id}>", "").replace(f"<@!{self.bot_id}>", "").strip()
 
         # Build IncomingMessage
+        sender_username = message.author.name
+        sender_display_name = getattr(message.author, "display_name", None) or message.author.name
+        sender_mention = f"<@{message.author.id}>"
+
         msg = IncomingMessage(
             channel="discord",
             chat_id=str(message.channel.id),
@@ -207,9 +229,14 @@ class DiscordChannel(BaseChannel):
             is_mention_bot=is_mention,
             is_from_bot=bool(message.author.bot),
             guild_id=str(message.guild.id) if message.guild else None,
+            sender_username=sender_username,
+            sender_display_name=sender_display_name,
+            sender_mention=sender_mention,
             reply_to_text=reply_to_text,
             attachments=attachments,
         )
+
+        self._reply_target[msg.chat_id] = {"mention": sender_mention, "is_private": msg.is_private}
 
         if self._message_handler:
             try:

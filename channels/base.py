@@ -27,6 +27,9 @@ class IncomingMessage:
     is_mention_bot: bool  # Does this mention the bot?
     is_from_bot: bool = False  # Is the sender a bot account?
     guild_id: Optional[str] = None  # Discord guild id for server messages
+    sender_username: Optional[str] = None  # Platform username/handle if available
+    sender_display_name: Optional[str] = None  # Human-readable sender name
+    sender_mention: Optional[str] = None  # Platform mention token for notifications
     reply_to_text: Optional[str] = None  # Original message being replied to
     attachments: List[Attachment] = None  # File attachments
     session_hint: Optional[str] = None  # Session ID hint from channel (e.g. from email thread)

@@ -189,10 +189,20 @@ class Router:
             att_info = "\n".join(att_lines)
             prompt = f"{prompt}\n\n附件:\n{att_info}" if prompt else f"附件:\n{att_info}"
 
-        # Prepend channel context
+        # Prepend channel context + sender context
         channel_context = self.rules_loader.get_system_prompt(message.channel)
-        if channel_context and prompt:
-            prompt = f"{channel_context}{prompt}"
+        sender_context = (
+            "[SENDER CONTEXT]\n"
+            f"- sender_user_id: {message.user_id}\n"
+            f"- sender_username: {message.sender_username or 'unknown'}\n"
+            f"- sender_display_name: {message.sender_display_name or 'unknown'}\n"
+            f"- sender_mention_token: {message.sender_mention or 'unknown'}\n"
+            "- Reply behavior constraint: start replies by mentioning the sender. "
+            "If the task semantics clearly require notifying additional people, mention them too.\n"
+            "[END SENDER CONTEXT]\n\n"
+        )
+        if prompt:
+            prompt = f"{channel_context}{sender_context}{prompt}"
 
         return prompt
 

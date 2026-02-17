@@ -19,6 +19,7 @@ channels:
     token: "${TG_BOT_TOKEN}"  # Set via environment variable
     parse_mode: "HTML"
     max_message_length: 4096
+    enforce_at_sender: true  # Always @ the sender in group replies
     allowed_users:
       - 123456789  # Replace with your Telegram user ID
 
@@ -27,6 +28,7 @@ channels:
     token: "${DISCORD_BOT_TOKEN}"  # Set via environment variable
     max_message_length: 2000
     allowed_guilds: []  # Empty = allow all guilds
+    enforce_at_sender: true  # Always @ the sender in guild replies
     allow_bots: true  # When true, accepts messages from other Discord bots
     members_intent: false  # Set true if you need member info
     allowed_users:
