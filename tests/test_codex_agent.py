@@ -78,6 +78,19 @@ class TestSendMessage:
         assert "line 1\n" in chunks
 
     @pytest.mark.asyncio
+    async def test_send_message_adds_skip_git_repo_check(self, agent):
+        session = await agent.create_session("u1", "c1")
+        mock_proc = _make_streaming_process([b"ok\n"], returncode=0)
+        mock_proc.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            async for _ in agent.send_message(session.session_id, "test"):
+                pass
+
+        args = mock_exec.call_args.args
+        assert "--skip-git-repo-check" in args
+
+    @pytest.mark.asyncio
     async def test_send_message_command_not_found(self, agent):
         session = await agent.create_session("u1", "c1")
         with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()):
