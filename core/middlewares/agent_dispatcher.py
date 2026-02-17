@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Awaitable, Callable, TYPE_CHECKING
 
@@ -15,7 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def agent_dispatcher_middleware(ctx: "Context", next: Callable[[], Awaitable[None]]) -> None:
+async def agent_dispatcher_middleware(ctx: "Context", call_next: Callable[[], Awaitable[None]]) -> None:
     router = ctx.router
     session = ctx.session
     agent = ctx.agent
@@ -23,9 +22,7 @@ async def agent_dispatcher_middleware(ctx: "Context", next: Callable[[], Awaitab
     session_id = session.session_id
 
     # ── Acquire per-session lock ──
-    if session_id not in router._session_locks:
-        router._session_locks[session_id] = asyncio.Lock()
-    lock = router._session_locks[session_id]
+    lock = router.get_session_lock(session_id)
 
     if lock.locked():
         await ctx.channel.send_text(message.chat_id, "⏳ 上一个请求还在处理中，请稍后再试")

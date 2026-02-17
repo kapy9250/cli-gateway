@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def auth_middleware(ctx: "Context", next: Callable[[], Awaitable[None]]) -> None:
+async def auth_middleware(ctx: "Context", call_next: Callable[[], Awaitable[None]]) -> None:
     allowed, reason = ctx.auth.check_detailed(ctx.user_id, channel=ctx.channel_name)
     if not allowed:
         if reason == "rate_limited":
@@ -20,4 +20,4 @@ async def auth_middleware(ctx: "Context", next: Callable[[], Awaitable[None]]) -
             logger.warning("Unauthorized access: user_id=%s channel=%s", ctx.user_id, ctx.channel_name)
             await ctx.router._reply(ctx.message, "⚠️ 未授权访问")
         return
-    await next()
+    await call_next()

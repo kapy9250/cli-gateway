@@ -89,7 +89,7 @@ async def handle_cancel(ctx: "Context") -> None:
         await ctx.router._reply(ctx.message, "当前无正在执行的任务")
         return
     # Signal the streaming delivery loop to stop
-    cancel_event = ctx.router._cancel_events.get(current.session_id)
+    cancel_event = ctx.router.peek_cancel_event(current.session_id)
     if cancel_event:
         cancel_event.set()
     await agent.cancel(current.session_id)

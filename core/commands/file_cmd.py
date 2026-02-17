@@ -53,9 +53,10 @@ async def handle_download(ctx: "Context") -> None:
         await router._reply(ctx.message, "❌ 会话不可用")
         return
     ai_dir = agent.sessions[current.session_id].work_dir / "ai"
-    filepath = (ai_dir / filename).resolve()
+    ai_dir_resolved = ai_dir.resolve()
+    filepath = (ai_dir_resolved / filename).resolve()
     # Path traversal protection
-    if not str(filepath).startswith(str(ai_dir.resolve())):
+    if not filepath.is_relative_to(ai_dir_resolved):
         await router._reply(ctx.message, "❌ 非法路径")
         return
     if not filepath.exists() or not filepath.is_file():

@@ -55,7 +55,7 @@ async def handle_agent(ctx: "Context") -> None:
         try:
             ctx.session_manager.destroy_session(current.session_id)
         finally:
-            router._session_locks.pop(current.session_id, None)
+            router.pop_session_lock(current.session_id)
 
     await router._reply(
         ctx.message,

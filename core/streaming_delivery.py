@@ -27,7 +27,7 @@ class StreamingDelivery:
     Supports:
     * Idle timeout — if no new chunk arrives for *idle_timeout* seconds
       the stream is considered stalled and delivery stops.
-    * Cancel event — ``router._cancel_events[session_id]`` can be set
+    * Cancel event — ``router.get_cancel_event(session_id)`` can be set
       from a ``/cancel`` command to interrupt the stream.
     """
 
@@ -45,9 +45,7 @@ class StreamingDelivery:
 
         # Get (or create) a cancel event shared via the Router so that
         # a /cancel command on a separate message can signal this stream.
-        cancel_event: asyncio.Event = ctx.router._cancel_events.setdefault(
-            session_id, asyncio.Event()
-        )
+        cancel_event: asyncio.Event = ctx.router.get_cancel_event(session_id)
 
         use_streaming = getattr(ctx.channel, "supports_streaming", True)
 
@@ -57,7 +55,7 @@ class StreamingDelivery:
             response = await self._batch_mode(ctx, chunks, cancel_event, idle_timeout)
 
         # Clean up cancel event after delivery
-        ctx.router._cancel_events.pop(session_id, None)
+        ctx.router.pop_cancel_event(session_id)
 
         return response
 
@@ -73,19 +71,23 @@ class StreamingDelivery:
         buffer = ""
         message_id = None
         last_update = 0.0
-        last_chunk_time = time.time()
-
-        async for chunk in chunks:
+        chunk_iter = chunks.__aiter__()
+        while True:
             if cancel_event.is_set():
                 logger.info("Stream cancelled for user=%s", ctx.user_id)
                 break
-            now = time.time()
-            if now - last_chunk_time > idle_timeout:
+
+            try:
+                chunk = await asyncio.wait_for(chunk_iter.__anext__(), timeout=idle_timeout)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
                 logger.warning("Stream idle timeout (%.0fs) for user=%s", idle_timeout, ctx.user_id)
                 break
+
+            now = time.time()
             if chunk:
                 buffer += chunk
-                last_chunk_time = now
                 if now - last_update >= STREAM_UPDATE_INTERVAL:
                     if message_id is None:
                         message_id = await ctx.channel.send_text(
@@ -116,18 +118,21 @@ class StreamingDelivery:
         idle_timeout: float,
     ) -> str:
         buffer = ""
-        last_chunk_time = time.time()
-
-        async for chunk in chunks:
+        chunk_iter = chunks.__aiter__()
+        while True:
             if cancel_event.is_set():
                 break
-            now = time.time()
-            if now - last_chunk_time > idle_timeout:
+
+            try:
+                chunk = await asyncio.wait_for(chunk_iter.__anext__(), timeout=idle_timeout)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
                 logger.warning("Stream idle timeout (%.0fs) for user=%s", idle_timeout, ctx.user_id)
                 break
+
             if chunk:
                 buffer += chunk
-                last_chunk_time = now
 
         response = self.formatter.clean(buffer) or "✅ 完成"
         for part in self.formatter.split_message(response):

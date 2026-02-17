@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Awaitable, Callable, TYPE_CHECKING
 
-from channels.base import IncomingMessage
 from core.command_registry import registry
 
 if TYPE_CHECKING:
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def command_parser_middleware(ctx: "Context", next: Callable[[], Awaitable[None]]) -> None:
+async def command_parser_middleware(ctx: "Context", call_next: Callable[[], Awaitable[None]]) -> None:
     text = (ctx.message.text or "").strip()
 
     # ── Support "kapy <subcommand>" shorthand ──
@@ -22,24 +22,14 @@ async def command_parser_middleware(ctx: "Context", next: Callable[[], Awaitable
         subcommand = text[5:].strip()
         if subcommand:
             # Rewrite message with "/" prefix
-            ctx.message = IncomingMessage(
-                channel=ctx.message.channel,
-                chat_id=ctx.message.chat_id,
-                user_id=ctx.message.user_id,
-                text=f"/{subcommand}",
-                is_private=ctx.message.is_private,
-                is_reply_to_bot=ctx.message.is_reply_to_bot,
-                is_mention_bot=ctx.message.is_mention_bot,
-                reply_to_text=ctx.message.reply_to_text,
-                attachments=ctx.message.attachments,
-            )
+            ctx.message = replace(ctx.message, text=f"/{subcommand}")
             text = ctx.message.text
         else:
             await ctx.router._reply(ctx.message, "用法: kapy &lt;command&gt; [args]\n发送 'kapy help' 查看帮助")
             return
 
     if not text.startswith("/"):
-        await next()
+        await call_next()
         return
 
     parts = text.split()
@@ -51,4 +41,4 @@ async def command_parser_middleware(ctx: "Context", next: Callable[[], Awaitable
     else:
         # Not a known gateway command — forward to agent
         logger.info("Forwarding command %s to agent", cmd_name)
-        await next()
+        await call_next()

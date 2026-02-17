@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def logging_middleware(ctx: "Context", next: Callable[[], Awaitable[None]]) -> None:
+async def logging_middleware(ctx: "Context", call_next: Callable[[], Awaitable[None]]) -> None:
     text_preview = (ctx.message.text or "")[:60]
     logger.info(
         "Message from user=%s channel=%s: %s",
@@ -22,7 +22,7 @@ async def logging_middleware(ctx: "Context", next: Callable[[], Awaitable[None]]
     )
     start = time.time()
     try:
-        await next()
+        await call_next()
     finally:
         elapsed = time.time() - start
         logger.info(

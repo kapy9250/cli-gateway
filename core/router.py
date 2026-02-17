@@ -130,6 +130,26 @@ class Router:
         """Return the user's preferred agent name, falling back to global default."""
         return self._user_agent_pref.get(str(user_id), self.default_agent)
 
+    def get_session_lock(self, session_id: str) -> asyncio.Lock:
+        """Get or create a per-session lock."""
+        return self._session_locks.setdefault(session_id, asyncio.Lock())
+
+    def pop_session_lock(self, session_id: str) -> None:
+        """Remove a per-session lock if present."""
+        self._session_locks.pop(session_id, None)
+
+    def get_cancel_event(self, session_id: str) -> asyncio.Event:
+        """Get or create a per-session cancel event."""
+        return self._cancel_events.setdefault(session_id, asyncio.Event())
+
+    def peek_cancel_event(self, session_id: str) -> Optional[asyncio.Event]:
+        """Get an existing per-session cancel event without creating it."""
+        return self._cancel_events.get(session_id)
+
+    def pop_cancel_event(self, session_id: str) -> None:
+        """Remove a per-session cancel event if present."""
+        self._cancel_events.pop(session_id, None)
+
     async def _prepare_prompt(self, message: IncomingMessage, agent: BaseAgent, current) -> str:
         """Build the final prompt: text + filtered attachments + channel context."""
         prompt = message.text

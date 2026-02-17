@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable, TYPE_CHECKING
+from typing import Awaitable, Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.pipeline import Context
+    from core.session import ManagedSession
 
 logger = logging.getLogger(__name__)
 
 
-async def session_resolver_middleware(ctx: "Context", next: Callable[[], Awaitable[None]]) -> None:
+async def session_resolver_middleware(ctx: "Context", call_next: Callable[[], Awaitable[None]]) -> None:
     router = ctx.router
 
     # ── Ensure a managed session exists ──
@@ -29,10 +30,10 @@ async def session_resolver_middleware(ctx: "Context", next: Callable[[], Awaitab
 
     ctx.session = current
     ctx.agent = agent
-    await next()
+    await call_next()
 
 
-async def _ensure_session(ctx: "Context"):
+async def _ensure_session(ctx: "Context") -> Optional["ManagedSession"]:
     """Get existing session or create a new one. Returns ManagedSession or None."""
     router = ctx.router
     message = ctx.message
@@ -92,7 +93,7 @@ async def _recover_stale_session(ctx: "Context", agent, current):
     try:
         ctx.session_manager.destroy_session(old_session_id)
     finally:
-        router._session_locks.pop(old_session_id, None)
+        router.pop_session_lock(old_session_id)
     info = await agent.create_session(user_id=message.user_id, chat_id=message.chat_id)
     return ctx.session_manager.create_session(
         user_id=message.user_id,

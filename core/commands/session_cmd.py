@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from core.command_registry import command
 
 if TYPE_CHECKING:
     from core.pipeline import Context
+
+
+logger = logging.getLogger(__name__)
 
 
 @command("/sessions", "列出所有会话")
@@ -61,14 +65,13 @@ async def handle_kill(ctx: "Context") -> None:
         try:
             await agent.destroy_session(current.session_id)
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "Failed to destroy agent session %s: %s, cleaning up metadata only", current.session_id, e
             )
     try:
         ctx.session_manager.destroy_session(current.session_id)
     finally:
-        ctx.router._session_locks.pop(current.session_id, None)
+        ctx.router.pop_session_lock(current.session_id)
     await ctx.router._reply(ctx.message, f"🗑️ 已销毁会话 {current.session_id}")
 
 
