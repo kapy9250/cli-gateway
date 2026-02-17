@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -9,12 +10,41 @@ from typing import Dict, List, Optional
 
 
 class SystemExecutor:
+    _CRON_FIELD_RE = re.compile(r"^[A-Za-z0-9*/,\-]+$")
+    _CRON_USER_RE = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
+    _CRON_SPECIAL_SCHEDULES = {
+        "@reboot",
+        "@yearly",
+        "@annually",
+        "@monthly",
+        "@weekly",
+        "@daily",
+        "@midnight",
+        "@hourly",
+    }
+
     def __init__(self, config: Optional[dict] = None):
         cfg = config or {}
         self.enabled = bool(cfg.get("enabled", True))
         self.max_read_bytes = max(1, int(cfg.get("max_read_bytes", 65536)))
         self.max_journal_lines = int(cfg.get("max_journal_lines", 300))
         self.max_docker_output_bytes = int(cfg.get("max_docker_output_bytes", 200000))
+        default_docker_allowed = [
+            "ps",
+            "images",
+            "logs",
+            "inspect",
+            "stats",
+            "top",
+            "version",
+            "info",
+        ]
+        configured_allowed = cfg.get("docker_allowed_subcommands", default_docker_allowed)
+        if not isinstance(configured_allowed, (list, tuple, set)):
+            configured_allowed = default_docker_allowed
+        self.docker_allowed_subcommands: List[str] = [
+            str(cmd).strip().lower() for cmd in configured_allowed if str(cmd).strip()
+        ]
         self.cron_dir = str(cfg.get("cron_dir", "/etc/cron.d"))
         self.docker_bin = str(cfg.get("docker_bin", "docker"))
         self.sensitive_read_paths: List[str] = [
@@ -169,9 +199,12 @@ class SystemExecutor:
         target_path = self._normalize_path(path)
         if not self.is_write_allowed(target_path):
             return {"ok": False, "reason": "write_path_not_allowed"}
+        normalized_backup_path = self._normalize_path(backup_path)
+        if not self.is_write_allowed(normalized_backup_path):
+            return {"ok": False, "reason": "backup_path_not_allowed"}
 
         target = Path(target_path)
-        backup = Path(self._normalize_path(backup_path))
+        backup = Path(normalized_backup_path)
         if not backup.exists():
             return {"ok": False, "reason": "backup_not_found"}
         if not backup.is_file():
@@ -190,6 +223,39 @@ class SystemExecutor:
             return False
         allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
         return all(ch in allowed for ch in name)
+
+    @staticmethod
+    def _contains_line_break_or_nul(value: str) -> bool:
+        text = str(value or "")
+        return ("\n" in text) or ("\r" in text) or ("\x00" in text)
+
+    @classmethod
+    def _validate_cron_schedule(cls, schedule: str) -> bool:
+        text = str(schedule or "").strip()
+        if not text or cls._contains_line_break_or_nul(text):
+            return False
+        if text.startswith("@"):
+            return text in cls._CRON_SPECIAL_SCHEDULES
+        fields = text.split()
+        if len(fields) != 5:
+            return False
+        return all(bool(cls._CRON_FIELD_RE.fullmatch(field)) for field in fields)
+
+    @classmethod
+    def _validate_cron_user(cls, user: str) -> bool:
+        text = str(user or "").strip()
+        if not text or cls._contains_line_break_or_nul(text):
+            return False
+        return bool(cls._CRON_USER_RE.fullmatch(text))
+
+    @classmethod
+    def _validate_cron_command(cls, command: str) -> bool:
+        text = str(command or "")
+        if not text.strip():
+            return False
+        if cls._contains_line_break_or_nul(text):
+            return False
+        return True
 
     def _cron_file_path(self, name: str) -> Optional[Path]:
         if not self._validate_cron_name(name):
@@ -216,6 +282,12 @@ class SystemExecutor:
         cron_path = self._cron_file_path(name)
         if cron_path is None:
             return {"ok": False, "reason": "invalid_cron_name"}
+        if not self._validate_cron_schedule(schedule):
+            return {"ok": False, "reason": "invalid_cron_schedule"}
+        if not self._validate_cron_user(user):
+            return {"ok": False, "reason": "invalid_cron_user"}
+        if not self._validate_cron_command(command):
+            return {"ok": False, "reason": "invalid_cron_command"}
         if not self.is_write_allowed(str(cron_path)):
             return {"ok": False, "reason": "write_path_not_allowed"}
         content = "\n".join(
@@ -239,6 +311,31 @@ class SystemExecutor:
             return {"ok": False, "reason": "system_executor_disabled"}
         if not args:
             return {"ok": False, "reason": "docker_args_required"}
+        if any(self._contains_line_break_or_nul(str(a)) for a in args):
+            return {"ok": False, "reason": "docker_args_invalid"}
+
+        subcommand = ""
+        for token in args:
+            raw = str(token).strip()
+            if not raw:
+                continue
+            if raw.startswith("-"):
+                continue
+            subcommand = raw.lower()
+            break
+        if not subcommand:
+            return {
+                "ok": False,
+                "reason": "docker_subcommand_required",
+                "allowed_subcommands": self.docker_allowed_subcommands,
+            }
+        if self.docker_allowed_subcommands and subcommand not in self.docker_allowed_subcommands:
+            return {
+                "ok": False,
+                "reason": "docker_subcommand_not_allowed",
+                "subcommand": subcommand,
+                "allowed_subcommands": self.docker_allowed_subcommands,
+            }
 
         cmd = [self.docker_bin] + list(args)
         try:

@@ -40,6 +40,16 @@ system_ops:
   max_read_bytes: 65536
   max_journal_lines: 300
   max_docker_output_bytes: 200000
+  # Security default: only allow read-only docker subcommands.
+  docker_allowed_subcommands:
+    - "ps"
+    - "images"
+    - "logs"
+    - "inspect"
+    - "stats"
+    - "top"
+    - "version"
+    - "info"
   cron_dir: "/etc/cron.d"
   docker_bin: "docker"
   sensitive_read_paths:
@@ -62,12 +72,15 @@ system_ops:
 system_service:
   enabled: false
   socket_path: "/run/cli-gateway/system.sock"
+  socket_parent_mode: "0700"
   socket_mode: "0660"
   socket_uid: null
   socket_gid: null
   timeout_seconds: 10
   grant_secret: "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
   grant_ttl_seconds: 60
+  # Security default: require explicit local UID allowlist for socket callers.
+  enforce_peer_uid_allowlist: true
   # Optional: only allow requests from these local UNIX peer UIDs.
   # For example, set to the uid of the non-root gateway process.
   allowed_peer_uids: []

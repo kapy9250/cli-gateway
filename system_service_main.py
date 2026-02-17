@@ -59,6 +59,11 @@ def build_server(config: dict, args) -> SystemServiceServer:
     executor = SystemExecutor(config.get("system_ops", {}))
     require_grant_ops = set(str(v) for v in system_cfg.get("require_grant_ops", [])) or None
     allowed_peer_uids = set(int(v) for v in system_cfg.get("allowed_peer_uids", [])) or None
+    enforce_peer_uid_allowlist = bool(system_cfg.get("enforce_peer_uid_allowlist", True))
+    if enforce_peer_uid_allowlist and not allowed_peer_uids:
+        raise ValueError(
+            "system_service.allowed_peer_uids must be configured when enforce_peer_uid_allowlist=true"
+        )
     return SystemServiceServer(
         socket_path=socket_path,
         executor=executor,
@@ -68,6 +73,7 @@ def build_server(config: dict, args) -> SystemServiceServer:
         require_grant_ops=require_grant_ops,
         allowed_peer_uids=allowed_peer_uids,
         socket_mode=system_cfg.get("socket_mode"),
+        socket_parent_mode=system_cfg.get("socket_parent_mode", "0700"),
         socket_uid=system_cfg.get("socket_uid"),
         socket_gid=system_cfg.get("socket_gid"),
     )
@@ -89,6 +95,7 @@ async def main(argv=None):
         print(f"require_grant_ops: {sorted(server.require_grant_ops)}")
         print(f"allowed_peer_uids: {sorted(server.allowed_peer_uids)}")
         print(f"socket_mode: {oct(server.socket_mode) if server.socket_mode is not None else None}")
+        print(f"socket_parent_mode: {oct(server.socket_parent_mode)}")
         print(f"socket_uid: {server.socket_uid}")
         print(f"socket_gid: {server.socket_gid}")
         return

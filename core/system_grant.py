@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
@@ -54,6 +55,7 @@ class SystemGrantManager:
             raise ValueError("system grant secret is required")
         self.ttl_seconds = max(5, int(ttl_seconds))
         self._consumed_nonces: Dict[str, int] = {}
+        self._nonce_lock = threading.Lock()
 
     def _cleanup(self, now: int) -> None:
         stale = [nonce for nonce, exp in self._consumed_nonces.items() if exp <= now]
@@ -91,7 +93,8 @@ class SystemGrantManager:
         now: Optional[int] = None,
     ) -> Tuple[bool, str, Optional[GrantClaims]]:
         ts = int(time.time() if now is None else now)
-        self._cleanup(ts)
+        with self._nonce_lock:
+            self._cleanup(ts)
 
         parts = (token or "").split(".")
         if len(parts) != 3:
@@ -128,10 +131,11 @@ class SystemGrantManager:
             return False, "token_action_mismatch", None
 
         if consume:
-            seen_exp = self._consumed_nonces.get(nonce)
-            if seen_exp and seen_exp > ts:
-                return False, "token_replayed", None
-            self._consumed_nonces[nonce] = exp
+            with self._nonce_lock:
+                seen_exp = self._consumed_nonces.get(nonce)
+                if seen_exp and seen_exp > ts:
+                    return False, "token_replayed", None
+                self._consumed_nonces[nonce] = exp
 
         grant = GrantClaims(
             user_id=uid,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -188,7 +189,11 @@ async def _execute_action(ctx: "Context", action_payload: dict, grant_token: Opt
     executor = ctx.system_executor
     if executor is None:
         return {"ok": False, "reason": "system_executor_unavailable"}
-    return _execute_local(executor, action_payload)
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(None, _execute_local, executor, action_payload)
+    except Exception as e:
+        return {"ok": False, "reason": f"system_executor_exec_error:{e}"}
 
 
 def _audit(ctx: "Context", action: str, payload: dict, result: dict) -> None:
@@ -421,12 +426,23 @@ async def handle_sys(ctx: "Context") -> None:
         result = await _execute_action(ctx, action_payload, grant_token=grant_token)
         _audit(ctx, "docker_exec", {"args": docker_args}, result)
         if not result.get("ok"):
+            reason = str(result.get("reason", "docker_failed"))
+            hints = []
+            if reason == "docker_subcommand_not_allowed":
+                attempted = str(result.get("subcommand") or "?")
+                allowed = ", ".join(result.get("allowed_subcommands") or [])
+                hints.append(f"subcommand: <code>{attempted}</code>")
+                if allowed:
+                    hints.append(f"allowed: <code>{allowed}</code>")
+            elif reason == "docker_subcommand_required":
+                hints.append("请提供允许的 docker 子命令")
             await ctx.router._reply(
                 ctx.message,
                 "\n".join(
                     [
-                        f"❌ docker 执行失败: <code>{result.get('reason', 'docker_failed')}</code>",
+                        f"❌ docker 执行失败: <code>{reason}</code>",
                         f"returncode: <code>{result.get('returncode')}</code>",
+                        *hints,
                         "",
                         f"<pre><code>{result.get('output', '')}</code></pre>",
                     ]

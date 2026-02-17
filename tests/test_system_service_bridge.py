@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import stat
+import time
 import uuid
 from pathlib import Path
 
@@ -37,10 +38,18 @@ class FakeExecutor:
         return {"ok": True, "returncode": 0, "output": "docker-ok", "truncated": False, "cmd": ["docker"] + list(args)}
 
 
+class BlockingExecutor(FakeExecutor):
+    def docker_exec(self, args):
+        time.sleep(1.0)
+        return {"ok": True, "returncode": 0, "output": "docker-slow", "truncated": False, "cmd": ["docker"] + list(args)}
+
+
 def _short_socket_path(tmp_path) -> Path:
     # AF_UNIX path length is tight on macOS; keep test socket in /tmp.
     token = uuid.uuid4().hex[:8]
-    return Path("/tmp") / f"cli-gateway-test-{token}.sock"
+    parent = Path("/tmp") / f"cli-gateway-test-{token}"
+    parent.mkdir(mode=0o700, exist_ok=True)
+    return parent / "system.sock"
 
 
 @pytest.mark.asyncio
@@ -131,6 +140,64 @@ async def test_stop_closes_active_connections(tmp_path):
         assert not server._connections
     finally:
         # stop() is idempotent; ensure cleanup if test fails before explicit stop.
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_blocking_executor_does_not_block_other_connections(tmp_path):
+    socket_path = _short_socket_path(tmp_path)
+    server = SystemServiceServer(
+        socket_path=str(socket_path),
+        executor=BlockingExecutor(),
+        require_grant_ops={"none"},
+    )
+    await server.start()
+    try:
+        client = SystemServiceClient(str(socket_path), timeout_seconds=3.0)
+
+        async def _call(action: dict):
+            start = time.perf_counter()
+            resp = await client.execute("u1", action)
+            return (time.perf_counter() - start, resp)
+
+        slow_task = asyncio.create_task(_call({"op": "docker_exec", "args": ["ps"]}))
+        await asyncio.sleep(0.05)
+        fast_elapsed, fast_resp = await _call({"op": "journal", "lines": 1})
+        slow_elapsed, slow_resp = await slow_task
+
+        assert fast_resp.get("ok") is True
+        assert slow_resp.get("ok") is True
+        assert fast_elapsed < 0.5
+        assert slow_elapsed >= 1.0
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_refuses_non_socket_file_at_socket_path(tmp_path):
+    socket_path = tmp_path / "not-a-socket.sock"
+    socket_path.write_text("keep-me", encoding="utf-8")
+    server = SystemServiceServer(socket_path=str(socket_path), executor=FakeExecutor())
+    with pytest.raises(RuntimeError, match="socket_path_not_socket"):
+        await server.start()
+
+
+@pytest.mark.asyncio
+async def test_socket_parent_mode_is_enforced(tmp_path):
+    token = uuid.uuid4().hex[:8]
+    parent = Path("/tmp") / f"cli-gateway-parent-{token}"
+    parent.mkdir(mode=0o755, exist_ok=True)
+    socket_path = parent / "service.sock"
+    server = SystemServiceServer(
+        socket_path=str(socket_path),
+        executor=FakeExecutor(),
+        socket_parent_mode="0700",
+    )
+    await server.start()
+    try:
+        mode = stat.S_IMODE(os.stat(parent).st_mode)
+        assert mode == 0o700
+    finally:
         await server.stop()
 
 

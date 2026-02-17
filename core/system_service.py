@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import socket
+import stat
 import struct
 from pathlib import Path
 from typing import Dict, Optional, Set, Union
@@ -25,6 +26,7 @@ class SystemServiceServer:
         require_grant_ops: Optional[Set[str]] = None,
         allowed_peer_uids: Optional[Set[int]] = None,
         socket_mode: Optional[Union[int, str]] = None,
+        socket_parent_mode: Optional[Union[int, str]] = "0700",
         socket_uid: Optional[int] = None,
         socket_gid: Optional[int] = None,
     ):
@@ -47,6 +49,8 @@ class SystemServiceServer:
         )
         self.allowed_peer_uids = set(int(v) for v in (allowed_peer_uids or set()))
         self.socket_mode = self._normalize_mode(socket_mode)
+        normalized_parent_mode = self._normalize_mode(socket_parent_mode)
+        self.socket_parent_mode = 0o700 if normalized_parent_mode is None else normalized_parent_mode
         self.socket_uid = None if socket_uid is None else int(socket_uid)
         self.socket_gid = None if socket_gid is None else int(socket_gid)
         self._server: Optional[asyncio.AbstractServer] = None
@@ -55,10 +59,8 @@ class SystemServiceServer:
 
     async def start(self) -> None:
         self._stopping = False
-        sock = Path(self.socket_path)
-        sock.parent.mkdir(parents=True, exist_ok=True)
-        if sock.exists():
-            sock.unlink()
+        self._ensure_socket_parent_permissions()
+        self._remove_existing_socket(require_socket_type=True)
         self._server = await asyncio.start_unix_server(self._handle_conn, path=self.socket_path)
         self._apply_socket_permissions()
 
@@ -86,9 +88,10 @@ class SystemServiceServer:
                 pass
             self._server = None
 
-        sock = Path(self.socket_path)
-        if sock.exists():
-            sock.unlink()
+        try:
+            self._remove_existing_socket(require_socket_type=True)
+        except RuntimeError:
+            pass
 
     async def _handle_conn(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         if self._stopping:
@@ -120,7 +123,8 @@ class SystemServiceServer:
             except Exception as e:
                 await self._reply(writer, {"ok": False, "reason": f"request_decode_failed:{e}"})
                 return
-            result = self._process_request(req)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, self._process_request, req)
             await self._reply(writer, result)
         except Exception as e:
             try:
@@ -204,6 +208,30 @@ class SystemServiceServer:
                 self.socket_uid if self.socket_uid is not None else -1,
                 self.socket_gid if self.socket_gid is not None else -1,
             )
+
+    def _ensure_socket_parent_permissions(self) -> None:
+        p = Path(self.socket_path).parent
+        p.mkdir(parents=True, exist_ok=True)
+        os.chmod(p, self.socket_parent_mode)
+        if self.socket_uid is not None or self.socket_gid is not None:
+            os.chown(
+                p,
+                self.socket_uid if self.socket_uid is not None else -1,
+                self.socket_gid if self.socket_gid is not None else -1,
+            )
+
+    def _remove_existing_socket(self, *, require_socket_type: bool) -> None:
+        p = Path(self.socket_path)
+        try:
+            st = os.lstat(p)
+        except FileNotFoundError:
+            return
+        if require_socket_type and not stat.S_ISSOCK(st.st_mode):
+            raise RuntimeError(f"socket_path_not_socket:{self.socket_path}")
+        try:
+            os.unlink(p)
+        except FileNotFoundError:
+            return
 
     @staticmethod
     async def _wait_writer_closed(writer: asyncio.StreamWriter, timeout: float = 2.0) -> None:

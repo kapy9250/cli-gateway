@@ -132,7 +132,8 @@ sudo systemctl disable --now cli-gateway.service
 ```
 
 建议在 `system_service.allowed_peer_uids` 中限制可调用该 socket 的本地 UID（通常是 `cli-gateway` 用户）。
-并配置 `system_service.socket_mode/socket_uid/socket_gid`，确保非 root 网关进程可访问该 Unix socket。
+默认建议开启 `system_service.enforce_peer_uid_allowlist=true`，避免任意本地 UID 访问 root 执行器。
+并配置 `system_service.socket_parent_mode/socket_mode/socket_uid/socket_gid`，确保目录与 Unix socket 权限最小化且可被目标网关进程访问。
 
 所有 `/sys` 操作会写入审计日志（`logging.audit.file`，JSONL）。
 审计日志默认会对 `text/output/stderr/stdout` 做脱敏，仅记录摘要元数据。
