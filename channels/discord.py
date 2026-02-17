@@ -44,6 +44,7 @@ class DiscordChannel(BaseChannel):
 
         self.bot_id: Optional[int] = None
         self._channel_cache: dict = {}  # chat_id -> channel object
+        self._handler_tasks: set[asyncio.Task] = set()
         self._setup_events()
 
         logger.info("DiscordChannel initialized")
@@ -71,9 +72,24 @@ class DiscordChannel(BaseChannel):
 
     async def stop(self):
         """Stop bot gracefully"""
+        if self._handler_tasks:
+            for task in list(self._handler_tasks):
+                task.cancel()
+            await asyncio.gather(*self._handler_tasks, return_exceptions=True)
+            self._handler_tasks.clear()
         if self.client and not self.client.is_closed():
             await self.client.close()
             logger.info("Discord bot stopped")
+
+    async def _dispatch_message(self, msg: IncomingMessage):
+        """Run message handler in a background task so gateway callbacks stay responsive."""
+        if not self._message_handler:
+            return
+        try:
+            await self._message_handler(msg)
+        except Exception as e:
+            logger.error(f"Message handler error: {e}", exc_info=True)
+            await self.send_text(msg.chat_id, f"❌ 内部错误: {str(e)}")
 
     async def _resolve_channel(self, chat_id: str):
         """Resolve channel by ID: local cache → client cache → API fetch."""
@@ -239,11 +255,9 @@ class DiscordChannel(BaseChannel):
         self._reply_target[msg.chat_id] = {"mention": sender_mention, "is_private": msg.is_private}
 
         if self._message_handler:
-            try:
-                await self._message_handler(msg)
-            except Exception as e:
-                logger.error(f"Message handler error: {e}", exc_info=True)
-                await self.send_text(msg.chat_id, f"❌ 内部错误: {str(e)}")
+            task = asyncio.create_task(self._dispatch_message(msg))
+            self._handler_tasks.add(task)
+            task.add_done_callback(self._handler_tasks.discard)
 
     async def _process_attachments(self, message: Message) -> List[Attachment]:
         """Download and process attachments from Discord message"""

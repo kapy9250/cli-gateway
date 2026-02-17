@@ -36,6 +36,7 @@ class TelegramChannel(BaseChannel):
         self.bot_id: Optional[int] = None
         self.bot_username: Optional[str] = None
         self.formatter = OutputFormatter(config)
+        self._handler_tasks: set[asyncio.Task] = set()
         
         logger.info("TelegramChannel initialized")
     
@@ -61,11 +62,28 @@ class TelegramChannel(BaseChannel):
     
     async def stop(self):
         """Stop bot gracefully"""
+        if self._handler_tasks:
+            for task in list(self._handler_tasks):
+                task.cancel()
+            await asyncio.gather(*self._handler_tasks, return_exceptions=True)
+            self._handler_tasks.clear()
         if self.app:
             await self.app.updater.stop()
             await self.app.stop()
             await self.app.shutdown()
             logger.info("Telegram bot stopped")
+
+    async def _dispatch_message(self, msg: IncomingMessage):
+        """Run message handler in a background task so update polling stays responsive."""
+        if not self._message_handler:
+            return
+        try:
+            await self._message_handler(msg)
+        except Exception as e:
+            logger.error(f"Message handler error: {e}", exc_info=True)
+            await self.send_text(msg.chat_id, f"❌ 内部错误: {str(e)}")
+        finally:
+            await self.cleanup_attachments(msg)
     
     @staticmethod
     def _strip_markup_for_plain(text: str) -> str:
@@ -271,13 +289,9 @@ class TelegramChannel(BaseChannel):
         
         # Forward to handler
         if self._message_handler:
-            try:
-                await self._message_handler(msg)
-            except Exception as e:
-                logger.error(f"Message handler error: {e}", exc_info=True)
-                await self.send_text(msg.chat_id, f"❌ 内部错误: {str(e)}")
-            finally:
-                await self.cleanup_attachments(msg)
+            task = asyncio.create_task(self._dispatch_message(msg))
+            self._handler_tasks.add(task)
+            task.add_done_callback(self._handler_tasks.discard)
     
     async def cleanup_attachments(self, message: IncomingMessage):
         """Delete downloaded attachment files and empty temp directories"""
