@@ -28,3 +28,15 @@ def test_write_yaml_sets_strict_file_mode(tmp_path: Path):
     mode = output.stat().st_mode & 0o777
     assert mode == 0o600
     assert yaml.safe_load(output.read_text(encoding="utf-8")) == {"auth": {"system_admin_users": ["1"]}}
+
+
+def test_write_yaml_rewrites_existing_file_with_strict_mode(tmp_path: Path):
+    output = tmp_path / "ops.yaml"
+    output.write_text("channels: {}\n", encoding="utf-8")
+    output.chmod(0o644)
+
+    _write_yaml(output, {"channels": {"telegram": {"enabled": True}}})
+
+    mode = output.stat().st_mode & 0o777
+    assert mode == 0o600
+    assert yaml.safe_load(output.read_text(encoding="utf-8")) == {"channels": {"telegram": {"enabled": True}}}
