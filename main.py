@@ -281,33 +281,55 @@ async def main(argv=None):
                 grant_ttl_seconds,
             )
         
+        session_cfg = config.get("session", {})
+        if not isinstance(session_cfg, dict):
+            logger.error("❌ Invalid config: session must be an object")
+            sys.exit(1)
+        workspace_base_raw = session_cfg.get("workspace_base")
+        if not workspace_base_raw:
+            logger.error("❌ Missing required config: session.workspace_base")
+            sys.exit(1)
+        workspace_base = Path(str(workspace_base_raw))
+
+        agents_cfg = config.get("agents", {})
+        if not isinstance(agents_cfg, dict):
+            logger.error("❌ Invalid config: agents must be an object")
+            sys.exit(1)
+
+        channels_cfg = config.get("channels", {})
+        if not isinstance(channels_cfg, dict):
+            logger.error("❌ Invalid config: channels must be an object")
+            sys.exit(1)
+
         # Agents
         agents = {}
-        workspace_base = Path(config['session']['workspace_base'])
-        
+
         # Claude Code agent
-        if config['agents']['claude'].get('enabled', True):
+        claude_cfg = agents_cfg.get('claude', {})
+        if claude_cfg.get('enabled', True):
             agents['claude'] = ClaudeCodeAgent(
                 name='claude',
-                config=config['agents']['claude'],
+                config=claude_cfg,
                 workspace_base=workspace_base
             )
             logger.info("✅ Claude Code agent initialized")
         
         # Codex agent (Phase 3)
-        if config['agents'].get('codex', {}).get('enabled', False):
+        codex_cfg = agents_cfg.get('codex', {})
+        if codex_cfg.get('enabled', False):
             agents['codex'] = CodexAgent(
                 name='codex',
-                config=config['agents']['codex'],
+                config=codex_cfg,
                 workspace_base=workspace_base
             )
             logger.info("✅ Codex agent initialized")
         
         # Gemini agent (Phase 3)
-        if config['agents'].get('gemini', {}).get('enabled', False):
+        gemini_cfg = agents_cfg.get('gemini', {})
+        if gemini_cfg.get('enabled', False):
             agents['gemini'] = GeminiAgent(
                 name='gemini',
-                config=config['agents']['gemini'],
+                config=gemini_cfg,
                 workspace_base=workspace_base
             )
             logger.info("✅ Gemini agent initialized")
@@ -317,24 +339,27 @@ async def main(argv=None):
             sys.exit(1)
         
         # Session Manager
-        session_manager = SessionManager(Path(config['session']['workspace_base']))
+        session_manager = SessionManager(workspace_base)
         
         # Channels
         channels = []
         
         # Telegram Channel
-        if config['channels'].get('telegram', {}).get('enabled', True):
-            telegram = TelegramChannel(config['channels']['telegram'])
+        telegram_cfg = channels_cfg.get('telegram', {})
+        if telegram_cfg.get('enabled', True):
+            telegram = TelegramChannel(telegram_cfg)
             channels.append(('Telegram', telegram))
         
         # Discord Channel
-        if config['channels'].get('discord', {}).get('enabled', False):
-            discord_channel = DiscordChannel(config['channels']['discord'])
+        discord_cfg = channels_cfg.get('discord', {})
+        if discord_cfg.get('enabled', False):
+            discord_channel = DiscordChannel(discord_cfg)
             channels.append(('Discord', discord_channel))
         
         # Email Channel
-        if config['channels'].get('email', {}).get('enabled', False):
-            email_channel = EmailChannel(config['channels']['email'])
+        email_cfg = channels_cfg.get('email', {})
+        if email_cfg.get('enabled', False):
+            email_channel = EmailChannel(email_cfg)
             channels.append(('Email', email_channel))
         
         if not channels:
