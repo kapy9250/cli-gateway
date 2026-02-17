@@ -8,7 +8,9 @@ Type=simple
 User=pi
 Group=pi
 WorkingDirectory=/opt/cli-gateway
-ExecStart=/usr/bin/python3 main.py
+# Prefer project venv, fallback to system Python if missing.
+Environment=PATH=/opt/cli-gateway/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/env python3 main.py
 
 # Environment
 Environment=TG_BOT_TOKEN=your-token-here

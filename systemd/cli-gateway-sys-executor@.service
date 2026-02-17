@@ -12,7 +12,9 @@ Group=root
 
 WorkingDirectory=/opt/cli-gateway
 EnvironmentFile=-/etc/cli-gateway/%i.env
-ExecStart=/usr/bin/python3 /opt/cli-gateway/system_service_main.py --config /etc/cli-gateway/%i.yaml
+# Prefer project venv, fallback to system Python if missing.
+Environment=PATH=/opt/cli-gateway/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/env python3 /opt/cli-gateway/system_service_main.py --config /etc/cli-gateway/%i.yaml
 
 Restart=always
 RestartSec=5

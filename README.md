@@ -99,6 +99,15 @@ python system_service_main.py --config /etc/cli-gateway/ops-a.yaml --validate-on
 python system_service_main.py --config /etc/cli-gateway/ops-a.yaml
 ```
 
+使用 `systemd` 模板部署时，会优先使用 `/opt/cli-gateway/.venv/bin/python3`（不存在时回退系统 `python3`）。
+建议先在部署目录初始化依赖：
+
+```bash
+cd /opt/cli-gateway
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt
+```
+
 建议在 `system_service.allowed_peer_uids` 中限制可调用该 socket 的本地 UID（通常是 `cli-gateway` 用户）。
 并配置 `system_service.socket_mode/socket_uid/socket_gid`，确保非 root 网关进程可访问该 Unix socket。
 

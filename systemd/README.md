@@ -12,6 +12,18 @@ Both templates load:
 - env: `/etc/cli-gateway/%i.env` (optional)
 - runtime flags: `--instance-id %i --namespace-paths`
 
+Python runtime behavior:
+- units prefer `/opt/cli-gateway/.venv/bin/python3`
+- if the venv is missing, they fall back to system `python3`
+
+Recommended bootstrap:
+
+```bash
+cd /opt/cli-gateway
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt
+```
+
 ## Install
 
 ```bash

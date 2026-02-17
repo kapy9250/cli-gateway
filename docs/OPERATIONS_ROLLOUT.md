@@ -5,9 +5,13 @@ This runbook validates multi-instance deployment, dual permission modes, 2FA flo
 ## 1) Precheck
 
 ```bash
-python main.py --config config.yaml --validate-only
-python main.py --config config.yaml --instance-id canary --namespace-paths --validate-only
-python system_service_main.py --config config.yaml --validate-only
+cd /opt/cli-gateway
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt
+
+./.venv/bin/python main.py --config config.yaml --validate-only
+./.venv/bin/python main.py --config config.yaml --instance-id canary --namespace-paths --validate-only
+./.venv/bin/python system_service_main.py --config config.yaml --validate-only
 ```
 
 Expected:
