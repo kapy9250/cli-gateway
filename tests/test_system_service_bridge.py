@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import stat
 import uuid
@@ -108,6 +109,28 @@ async def test_sensitive_read_requires_grant(tmp_path):
         assert allowed.get("ok") is True
         assert allowed.get("sensitive") is True
     finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_closes_active_connections(tmp_path):
+    socket_path = _short_socket_path(tmp_path)
+    server = SystemServiceServer(
+        socket_path=str(socket_path),
+        executor=FakeExecutor(),
+        request_timeout_seconds=60.0,
+    )
+    await server.start()
+    try:
+        _reader, writer = await asyncio.open_unix_connection(str(socket_path))
+        writer.write(b'{"partial":true}')
+        await writer.drain()
+
+        await asyncio.wait_for(server.stop(), timeout=2.0)
+        await asyncio.sleep(0)
+        assert not server._connections
+    finally:
+        # stop() is idempotent; ensure cleanup if test fails before explicit stop.
         await server.stop()
 
 

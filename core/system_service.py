@@ -50,8 +50,11 @@ class SystemServiceServer:
         self.socket_uid = None if socket_uid is None else int(socket_uid)
         self.socket_gid = None if socket_gid is None else int(socket_gid)
         self._server: Optional[asyncio.AbstractServer] = None
+        self._connections: Set[asyncio.StreamWriter] = set()
+        self._stopping = False
 
     async def start(self) -> None:
+        self._stopping = False
         sock = Path(self.socket_path)
         sock.parent.mkdir(parents=True, exist_ok=True)
         if sock.exists():
@@ -60,15 +63,37 @@ class SystemServiceServer:
         self._apply_socket_permissions()
 
     async def stop(self) -> None:
+        self._stopping = True
         if self._server:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
+
+        # Proactively close active connections so handler tasks can exit quickly.
+        writers = list(self._connections)
+        for writer in writers:
+            try:
+                writer.close()
+            except Exception:
+                pass
+        if writers:
+            await asyncio.gather(*(self._wait_writer_closed(w) for w in writers), return_exceptions=True)
+        self._connections.clear()
+
         sock = Path(self.socket_path)
         if sock.exists():
             sock.unlink()
 
     async def _handle_conn(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if self._stopping:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return
+
+        self._connections.add(writer)
         try:
             peer_uid = self._extract_peer_uid(writer)
             if not self._is_peer_uid_allowed(peer_uid):
@@ -92,8 +117,12 @@ class SystemServiceServer:
             result = self._process_request(req)
             await self._reply(writer, result)
         except Exception as e:
-            await self._reply(writer, {"ok": False, "reason": f"handler_error:{e}"})
+            try:
+                await self._reply(writer, {"ok": False, "reason": f"handler_error:{e}"})
+            except Exception:
+                pass
         finally:
+            self._connections.discard(writer)
             try:
                 writer.close()
                 await writer.wait_closed()
@@ -169,6 +198,13 @@ class SystemServiceServer:
                 self.socket_uid if self.socket_uid is not None else -1,
                 self.socket_gid if self.socket_gid is not None else -1,
             )
+
+    @staticmethod
+    async def _wait_writer_closed(writer: asyncio.StreamWriter, timeout: float = 2.0) -> None:
+        try:
+            await asyncio.wait_for(writer.wait_closed(), timeout=timeout)
+        except Exception:
+            pass
 
     def _requires_grant(self, action: dict) -> bool:
         op = str((action or {}).get("op", "")).strip().lower()
