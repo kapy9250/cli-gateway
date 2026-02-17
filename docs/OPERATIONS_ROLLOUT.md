@@ -41,6 +41,10 @@ sudo systemctl status cli-gateway-system@ops-a --no-pager -l
 sudo systemctl status cli-gateway-sys-executor@ops-a --no-pager -l
 ```
 
+Note:
+- `cli-gateway-system@ops-a` reads the same `%i.yaml` as the chat gateway and requires full `session/agents/channels` config.
+- `cli-gateway-sys-executor@ops-a` can be validated independently with a minimal privileged config.
+
 Expected:
 - all services active
 - separate config/state/workspace/log paths

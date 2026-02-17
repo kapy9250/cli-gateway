@@ -108,6 +108,9 @@ python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 ```
 
+`cli-gateway-system@<id>` 仍是完整网关进程，需要 `<id>.yaml` 提供 `session/agents/channels` 等配置。
+如果只验证 root 执行桥接，可仅启动 `cli-gateway-sys-executor@<id>`（最小 `system_service/system_ops` 配置即可）。
+
 建议在 `system_service.allowed_peer_uids` 中限制可调用该 socket 的本地 UID（通常是 `cli-gateway` 用户）。
 并配置 `system_service.socket_mode/socket_uid/socket_gid`，确保非 root 网关进程可访问该 Unix socket。
 

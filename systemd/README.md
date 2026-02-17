@@ -6,6 +6,10 @@ This directory provides templates for split-plane deployment:
 - `cli-gateway-system@.service`: non-root ops gateway (`--mode system`, chat + 2FA)
 - `cli-gateway-sys-executor@.service`: root privileged executor (`system_service_main.py`)
 
+Config scope:
+- `cli-gateway-system@.service` needs a full gateway config (`session`, `agents`, `channels`, auth/2FA as needed).
+- `cli-gateway-sys-executor@.service` can run with a minimal privileged config (`system_service` + `system_ops` + logging).
+
 Both templates load:
 
 - config: `/etc/cli-gateway/%i.yaml`
