@@ -38,6 +38,8 @@ class Context:
     billing: Optional[BillingTracker]
     two_factor: Optional[object]
     system_executor: Optional[object]
+    system_client: Optional[object]
+    system_grant: Optional[object]
     audit_logger: Optional[object]
     formatter: OutputFormatter
     config: dict

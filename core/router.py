@@ -38,6 +38,8 @@ class Router:
         billing: Optional[BillingTracker] = None,
         two_factor: Optional[object] = None,
         system_executor: Optional[object] = None,
+        system_client: Optional[object] = None,
+        system_grant: Optional[object] = None,
         audit_logger: Optional[object] = None,
     ) -> None:
         self.auth = auth
@@ -48,6 +50,8 @@ class Router:
         self.billing = billing
         self.two_factor = two_factor
         self.system_executor = system_executor
+        self.system_client = system_client
+        self.system_grant = system_grant
         self.audit_logger = audit_logger
         self.rules_loader = RulesLoader()
         self.formatter = OutputFormatter(config.get("formatter", {}))
@@ -107,6 +111,8 @@ class Router:
             billing=self.billing,
             two_factor=self.two_factor,
             system_executor=self.system_executor,
+            system_client=self.system_client,
+            system_grant=self.system_grant,
             audit_logger=self.audit_logger,
             formatter=self.formatter,
             config=self.config,
