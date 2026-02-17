@@ -2,7 +2,7 @@
 
 **通用 CLI 代理网关** - 通过 Telegram / Discord / Email 访问 Claude Code、Codex、Gemini 等 CLI 工具
 
-[![Tests](https://img.shields.io/badge/tests-6%2F6%20passing-brightgreen)](TEST_REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-pytest-blue)](#-测试)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org)
 
 ---
@@ -16,6 +16,9 @@
 - 📡 **流式输出** - 实时显示 agent 响应
 - 📎 **附件支持** - 发送图片、文档给 agent
 - 🎯 **两种命令格式** - 支持 `/model` 和 `kapy model` 两种格式
+- 🧩 **多实例运行** - 支持 `--config` / `--instance-id` 同目录多实例部署
+- 🔐 **双权限级别** - `session`（普通会话）与 `system`（系统运维）双模式
+- 🔒 **2FA + 审计** - 敏感读写/运维操作支持挑战审批与 JSONL 审计日志
 - 🔌 **可扩展架构** - 轻松添加新的 CLI 工具
 
 ---
@@ -48,6 +51,50 @@ nano config.yaml
 ```bash
 python main.py
 ```
+
+多实例示例（同一代码目录，不同配置和实例 ID）：
+
+```bash
+python main.py --config /etc/cli-gateway/bot-a.yaml --mode session --instance-id bot-a
+python main.py --config /etc/cli-gateway/bot-b.yaml --mode session --instance-id bot-b --health-port 18801
+```
+
+仅验证配置解析（不启动机器人）：
+
+```bash
+python main.py --config config.yaml --instance-id test-a --validate-only
+python main.py --config config.yaml --instance-id test-b --namespace-paths --validate-only
+```
+
+system 模式下可用 2FA 审批命令（需配置 `two_factor` 与 `system_admin_users`）：
+
+```bash
+kapy sysauth plan restart nginx
+kapy sysauth approve <challenge_id> <totp_code>
+kapy sysauth status <challenge_id>
+```
+
+system 模式只读运维命令（Gate 5）：
+
+```bash
+kapy sys journal cli-gateway.service 80
+kapy sys read /etc/hosts
+kapy sys read /etc/shadow --challenge <challenge_id>
+```
+
+system 模式写操作（Gate 6，默认都需要 2FA challenge）：
+
+```bash
+kapy sys cron list
+kapy sys cron upsert backup-job "*/5 * * * *" "/usr/local/bin/backup.sh"
+kapy sys docker ps -a
+kapy sys config write /etc/myapp.conf <base64_content>
+kapy sys config rollback /etc/myapp.conf /etc/myapp.conf.bak.20260216_200000
+```
+
+所有 `/sys` 操作会写入审计日志（`logging.audit.file`，JSONL）。
+审计日志默认会对 `text/output/stderr/stdout` 做脱敏，仅记录摘要元数据。
+灰度与上线步骤见：`docs/OPERATIONS_ROLLOUT.md`
 
 ---
 
@@ -186,35 +233,35 @@ agents:
 ### 运行测试套件
 
 ```bash
+pytest -q
+```
+
+手动联调（可选）：
+
+```bash
 python tests/manual_test_bot.py
 ```
 
-**测试覆盖：**
-- ✅ 基础命令
-- ✅ 模型切换
-- ✅ 参数配置
-- ✅ 消息发送
-- ✅ 会话持久化
-- ✅ kapy 新格式
-
-**测试结果：6/6 通过** 🎉
-
-详细报告：[TEST_REPORT.md](TEST_REPORT.md)
+建议在修改 system 权限、2FA、`/sys` 指令相关代码后，至少执行：
+- `tests/test_auth.py`
+- `tests/test_system_mode_security.py`
+- `tests/test_system_executor_security.py`
 
 ---
 
-## 📋 TODO
+## 📋 Roadmap
 
-**Phase 3: 多 CLI 集成**
-- [ ] 启用 Codex CLI
-- [ ] 启用 Gemini CLI
-- [ ] 测试不同 CLI 的参数格式
+已完成：
+- [x] 多实例配置与启动参数（`--config` / `--instance-id` / `--mode`）
+- [x] systemd 模板化部署（session / system 双模板）
+- [x] system_admin 身份分离与 mode 门禁
+- [x] `/sysauth` 2FA 挑战/审批流（TOTP）
+- [x] `/sys` 日志/文件/cron/docker/config 运维指令
+- [x] 系统运维审计日志与配置回滚
 
-**功能增强**
-- [ ] 错误重试机制
-- [ ] 日志结构化
-- [ ] 健康检查端点
-- [ ] 多用户并发测试
+进行中：
+- [ ] 生产环境 canary 观察与告警阈值固化
+- [ ] system 模式运维命令的端到端集成测试
 
 ---
 
@@ -231,7 +278,7 @@ python tests/manual_test_bot.py
 3. 查看错误日志
 
 ### 会话丢失
-- 会话保存在 `workspaces/.sessions.json`
+- 会话保存在 `workspaces/<instance_id>/.sessions.json`
 - 检查文件权限
 - 查看 SessionManager 日志
 
@@ -250,4 +297,4 @@ MIT
 
 ---
 
-**Made with ❤️ by Kapybara 🦫**
+**Maintained by CLI Gateway contributors**

@@ -1,7 +1,6 @@
 """Tests for core/router.py — Session lifecycle management."""
 
 import pytest
-import time
 
 from channels.base import IncomingMessage
 
@@ -90,13 +89,20 @@ class TestCleanupOrphanBusy:
 class TestEmailSessionHint:
 
     @pytest.mark.asyncio
-    async def test_email_session_hint_resume(self, auth, session_manager, mock_agent, sample_config, billing):
+    async def test_email_session_hint_resume(
+        self, auth, session_manager, mock_agent, sample_config, billing, fake_channel
+    ):
         from core.router import Router
-        from tests.conftest import FakeChannel
 
         auth.add_user("user@test.com", "email")
-        ch = FakeChannel()
-        r = Router(auth=auth, session_manager=session_manager, agents={"claude": mock_agent}, channel=ch, config=sample_config, billing=billing)
+        r = Router(
+            auth=auth,
+            session_manager=session_manager,
+            agents={"claude": mock_agent},
+            channel=fake_channel,
+            config=sample_config,
+            billing=billing,
+        )
 
         # Create a session manually
         info = await mock_agent.create_session("user@test.com", "user@test.com")
@@ -114,13 +120,20 @@ class TestEmailSessionHint:
         assert active.session_id == info.session_id
 
     @pytest.mark.asyncio
-    async def test_email_session_hint_invalid(self, auth, session_manager, mock_agent, sample_config, billing):
+    async def test_email_session_hint_invalid(
+        self, auth, session_manager, mock_agent, sample_config, billing, fake_channel
+    ):
         from core.router import Router
-        from tests.conftest import FakeChannel
 
         auth.add_user("user@test.com", "email")
-        ch = FakeChannel()
-        r = Router(auth=auth, session_manager=session_manager, agents={"claude": mock_agent}, channel=ch, config=sample_config, billing=billing)
+        r = Router(
+            auth=auth,
+            session_manager=session_manager,
+            agents={"claude": mock_agent},
+            channel=fake_channel,
+            config=sample_config,
+            billing=billing,
+        )
 
         # Send email with invalid hint → should create new session
         msg = IncomingMessage(
@@ -136,23 +149,35 @@ class TestEmailSessionHint:
 
 class TestAgentNotAvailable:
 
-    def test_router_with_no_agents_raises(self, auth, session_manager, sample_config, billing):
+    def test_router_with_no_agents_raises(self, auth, session_manager, sample_config, billing, fake_channel):
         """Router requires at least one agent — empty dict causes StopIteration in __init__."""
         from core.router import Router
-        from tests.conftest import FakeChannel
 
-        ch = FakeChannel()
         with pytest.raises(StopIteration):
-            Router(auth=auth, session_manager=session_manager, agents={}, channel=ch, config=sample_config, billing=billing)
+            Router(
+                auth=auth,
+                session_manager=session_manager,
+                agents={},
+                channel=fake_channel,
+                config=sample_config,
+                billing=billing,
+            )
 
     @pytest.mark.asyncio
-    async def test_agent_mismatch_preference(self, auth, session_manager, mock_agent, sample_config, billing):
+    async def test_agent_mismatch_preference(
+        self, auth, session_manager, mock_agent, sample_config, billing, fake_channel
+    ):
         """User prefers an agent that doesn't exist → error message."""
         from core.router import Router
-        from tests.conftest import FakeChannel
 
-        ch = FakeChannel()
-        r = Router(auth=auth, session_manager=session_manager, agents={"claude": mock_agent}, channel=ch, config=sample_config, billing=billing)
+        r = Router(
+            auth=auth,
+            session_manager=session_manager,
+            agents={"claude": mock_agent},
+            channel=fake_channel,
+            config=sample_config,
+            billing=billing,
+        )
         # Set user preference to nonexistent agent
         r._user_agent_pref["123"] = "nonexistent"
 
@@ -161,5 +186,5 @@ class TestAgentNotAvailable:
             text="hello", is_private=True, is_reply_to_bot=False, is_mention_bot=False,
         )
         await r.handle_message(msg)
-        text = ch.last_sent_text()
+        text = fake_channel.last_sent_text()
         assert "不可用" in text or "❌" in text

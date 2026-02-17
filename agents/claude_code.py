@@ -2,6 +2,7 @@
 Claude Code CLI agent adapter
 """
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -38,16 +39,27 @@ class ClaudeCodeAgent(BaseAgent):
         proc = self._processes.get(session_id)
         return proc is not None and proc.returncode is None
 
+    async def _terminate_subprocess(self, proc: asyncio.subprocess.Process) -> None:
+        """Terminate a subprocess, handling both sync and async-mocked kill/wait."""
+        if not proc or proc.returncode is not None:
+            return
+        try:
+            killed = proc.kill()
+            if inspect.isawaitable(killed):
+                await killed
+        except ProcessLookupError:
+            return
+
+        waited = proc.wait()
+        if inspect.isawaitable(waited):
+            await waited
+
     async def kill_process(self, session_id: str) -> None:
         """Kill a running subprocess for a session and reset busy flag."""
         proc = self._processes.pop(session_id, None)
         if proc and proc.returncode is None:
-            try:
-                proc.kill()
-                await proc.wait()
-                logger.info("Killed orphan claude process for session %s", session_id)
-            except ProcessLookupError:
-                pass
+            await self._terminate_subprocess(proc)
+            logger.info("Killed orphan claude process for session %s", session_id)
         session = self.sessions.get(session_id)
         if session:
             session.is_busy = False
@@ -178,8 +190,7 @@ class ClaudeCodeAgent(BaseAgent):
                         timeout=timeout,
                     )
                 except asyncio.TimeoutError:
-                    process.kill()
-                    await process.wait()
+                    await self._terminate_subprocess(process)
                     logger.error(f"Claude Code timeout after {timeout}s")
                     yield f"⚠️ 操作超时（{timeout}秒），结果可能不完整"
                     return
@@ -252,12 +263,8 @@ class ClaudeCodeAgent(BaseAgent):
             # Always clean up subprocess (handles premature generator close)
             self._processes.pop(session_id, None)
             if process and process.returncode is None:
-                try:
-                    process.kill()
-                    await process.wait()
-                    logger.info("Killed subprocess on generator close for session %s", session_id)
-                except ProcessLookupError:
-                    pass
+                await self._terminate_subprocess(process)
+                logger.info("Killed subprocess on generator close for session %s", session_id)
             session.is_busy = False
             session.last_active = time.time()
 

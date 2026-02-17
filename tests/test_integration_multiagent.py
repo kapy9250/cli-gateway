@@ -127,31 +127,31 @@ async def test_multi_agent_workflow():
     test_scenarios = [
         # Scenario 1: Claude (默认)
         ("hello", "使用 Claude 默认配置"),
-        ("kapybara params", "查看 Claude 配置"),
+        ("kapy params", "查看 Claude 配置"),
         
         # Scenario 2: 切换到 Codex
-        ("kapybara agent codex", "切换到 Codex"),
-        ("kapybara params", "查看 Codex 配置"),
-        ("kapybara param temperature 0.7", "设置 Codex temperature"),
-        ("kapybara param max_tokens 2000", "设置 Codex max_tokens"),
-        ("kapybara params", "确认 Codex 配置"),
+        ("kapy agent codex", "切换到 Codex"),
+        ("kapy params", "查看 Codex 配置"),
+        ("kapy param temperature 0.7", "设置 Codex temperature"),
+        ("kapy param max_tokens 2000", "设置 Codex max_tokens"),
+        ("kapy params", "确认 Codex 配置"),
         ("write a sorting algorithm", "用 Codex 生成代码"),
         
         # Scenario 3: 切换到 Gemini
-        ("kapybara agent gemini", "切换到 Gemini"),
-        ("kapybara params", "查看 Gemini 配置"),
-        ("kapybara param temperature 0.8", "设置 Gemini temperature"),
+        ("kapy agent gemini", "切换到 Gemini"),
+        ("kapy params", "查看 Gemini 配置"),
+        ("kapy param temperature 0.8", "设置 Gemini temperature"),
         ("summarize this long text...", "用 Gemini 总结"),
         
         # Scenario 4: 切换回 Claude 并修改配置
-        ("kapybara agent claude", "切换回 Claude"),
-        ("kapybara model opus", "切换到 opus"),
-        ("kapybara param thinking high", "设置高级推理"),
-        ("kapybara params", "确认 Claude 新配置"),
+        ("kapy agent claude", "切换回 Claude"),
+        ("kapy model opus", "切换到 opus"),
+        ("kapy param thinking high", "设置高级推理"),
+        ("kapy params", "确认 Claude 新配置"),
         ("complex reasoning task", "用 Claude Opus 推理"),
         
         # Scenario 5: 验证 session 隔离
-        ("kapybara sessions", "列出所有会话"),
+        ("kapy sessions", "列出所有会话"),
     ]
     
     print("\n开始执行测试场景...")

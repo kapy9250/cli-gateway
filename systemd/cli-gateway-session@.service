@@ -1,0 +1,32 @@
+[Unit]
+Description=CLI Gateway (session mode) instance %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Session-level service should run as non-root.
+User=cli-gateway
+Group=cli-gateway
+
+WorkingDirectory=/opt/cli-gateway
+EnvironmentFile=-/etc/cli-gateway/%i.env
+ExecStart=/usr/bin/python3 /opt/cli-gateway/main.py --mode session --instance-id %i --config /etc/cli-gateway/%i.yaml --namespace-paths
+
+Restart=always
+RestartSec=5
+
+# Hardening defaults for user-level mode
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/opt/cli-gateway/workspaces /opt/cli-gateway/data /opt/cli-gateway/logs
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cli-gateway-session-%i
+
+[Install]
+WantedBy=multi-user.target

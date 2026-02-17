@@ -15,13 +15,14 @@ from utils.constants import (
 class TestCommandRegistry:
 
     def test_all_expected_commands_registered(self):
-        """Verify the command registry contains all 16 gateway commands."""
+        """Verify the command registry contains all gateway commands."""
         from core.command_registry import registry
 
         expected = {
             "/start", "/help", "/agent", "/sessions", "/kill",
             "/current", "/switch", "/model", "/param", "/params", "/reset",
             "/files", "/download", "/cancel", "/name", "/history",
+            "/whoami", "/sys", "/sysauth",
         }
         registered = {spec.name for spec in registry.list_all()}
         assert registered == expected

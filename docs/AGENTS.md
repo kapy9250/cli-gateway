@@ -256,5 +256,5 @@ if config['agents'].get('myagent', {}).get('enabled', False):
 
 ---
 
-**文档版本：** Phase 3  
-**最后更新：** 2026-02-07
+**文档版本：** Current
+**最后更新：** 2026-02-17

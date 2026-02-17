@@ -248,6 +248,11 @@ def make_message():
         chat_id: str = "chat_1",
         channel: str = "telegram",
         is_private: bool = True,
+        is_from_bot: bool = False,
+        guild_id: str = None,
+        sender_username: str = None,
+        sender_display_name: str = None,
+        sender_mention: str = None,
         attachments: list = None,
         session_hint: str = None,
     ) -> IncomingMessage:
@@ -259,6 +264,11 @@ def make_message():
             is_private=is_private,
             is_reply_to_bot=False,
             is_mention_bot=False,
+            is_from_bot=is_from_bot,
+            guild_id=guild_id,
+            sender_username=sender_username,
+            sender_display_name=sender_display_name,
+            sender_mention=sender_mention,
             attachments=attachments or [],
             session_hint=session_hint,
         )

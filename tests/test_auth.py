@@ -87,6 +87,12 @@ class TestUserMutation:
         auth.remove_user("123", "telegram")
         assert auth.check("123", channel="telegram") is False
 
+    def test_remove_user_also_revokes_system_admin(self, auth):
+        auth.add_system_admin("123")
+        assert auth.is_system_admin("123") is True
+        auth.remove_user("123", "telegram")
+        assert auth.is_system_admin("123") is False
+
     def test_get_channel_users(self, auth):
         users = auth.get_channel_users("telegram")
         assert "123" in users
@@ -112,6 +118,22 @@ class TestAdminOperations:
         assert auth.is_admin("123") is False
 
 
+class TestSystemAdminOperations:
+    """System-admin role management."""
+
+    def test_is_system_admin(self, auth):
+        assert auth.is_system_admin("123") is False
+
+    def test_add_system_admin(self, auth):
+        auth.add_system_admin("999")
+        assert auth.is_system_admin("999") is True
+
+    def test_remove_system_admin(self, auth):
+        auth.add_system_admin("777")
+        auth.remove_system_admin("777")
+        assert auth.is_system_admin("777") is False
+
+
 class TestAllowedUsersProperty:
     """The allowed_users property (union of all channels)."""
 
@@ -129,12 +151,14 @@ class TestPersistence:
         a1 = Auth(channel_allowed={"telegram": ["1"]}, state_file=str(state), admin_users=["1"])
         a1.add_user("2", "discord")
         a1.add_admin("2")
+        a1.add_system_admin("3")
 
         # Load fresh instance
         a2 = Auth(state_file=str(state))
         assert a2.check("1", "telegram") is True
         assert a2.check("2", "discord") is True
         assert a2.is_admin("2") is True
+        assert a2.is_system_admin("3") is True
 
     def test_legacy_format_migration(self, tmp_path):
         state = tmp_path / "auth.json"

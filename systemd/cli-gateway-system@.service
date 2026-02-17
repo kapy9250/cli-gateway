@@ -1,0 +1,31 @@
+[Unit]
+Description=CLI Gateway (system-admin mode) instance %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# System mode is intended for privileged operations.
+User=root
+Group=root
+
+WorkingDirectory=/opt/cli-gateway
+EnvironmentFile=-/etc/cli-gateway/%i.env
+ExecStart=/usr/bin/python3 /opt/cli-gateway/main.py --mode system --instance-id %i --config /etc/cli-gateway/%i.yaml --namespace-paths
+
+Restart=always
+RestartSec=5
+
+# Keep root defaults explicit for clarity.
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cli-gateway-system-%i
+
+[Install]
+WantedBy=multi-user.target

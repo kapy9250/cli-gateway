@@ -83,13 +83,20 @@ class TestModelPreferenceApplied:
 class TestMultipleUsersIsolation:
 
     @pytest.mark.asyncio
-    async def test_multiple_users(self, auth, session_manager, mock_agent, sample_config, billing):
+    async def test_multiple_users(
+        self, auth, session_manager, mock_agent, sample_config, billing, fake_channel
+    ):
         from core.router import Router
-        from tests.conftest import FakeChannel
 
         auth.add_user("u2", "telegram")
-        ch = FakeChannel()
-        r = Router(auth=auth, session_manager=session_manager, agents={"claude": mock_agent}, channel=ch, config=sample_config, billing=billing)
+        r = Router(
+            auth=auth,
+            session_manager=session_manager,
+            agents={"claude": mock_agent},
+            channel=fake_channel,
+            config=sample_config,
+            billing=billing,
+        )
 
         msg1 = IncomingMessage(
             channel="telegram", chat_id="c1", user_id="123",
@@ -113,14 +120,21 @@ class TestMultipleUsersIsolation:
 class TestSessionPersistenceIntegration:
 
     @pytest.mark.asyncio
-    async def test_persistence(self, auth, mock_agent, sample_config, billing, tmp_workspace):
+    async def test_persistence(
+        self, auth, mock_agent, sample_config, billing, tmp_workspace, fake_channel
+    ):
         from core.router import Router
         from core.session import SessionManager
-        from tests.conftest import FakeChannel
 
         sm1 = SessionManager(workspace_base=tmp_workspace)
-        ch1 = FakeChannel()
-        r1 = Router(auth=auth, session_manager=sm1, agents={"claude": mock_agent}, channel=ch1, config=sample_config, billing=billing)
+        r1 = Router(
+            auth=auth,
+            session_manager=sm1,
+            agents={"claude": mock_agent},
+            channel=fake_channel,
+            config=sample_config,
+            billing=billing,
+        )
 
         # Create session via message
         msg = IncomingMessage(

@@ -6,3 +6,5 @@ from core.commands import session_cmd  # noqa: F401
 from core.commands import agent_cmd  # noqa: F401
 from core.commands import model_cmd  # noqa: F401
 from core.commands import file_cmd  # noqa: F401
+from core.commands import sysauth_cmd  # noqa: F401
+from core.commands import sys_cmd  # noqa: F401

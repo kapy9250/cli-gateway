@@ -480,10 +480,10 @@ async def test_session_persistence():
     print("\n✅ TEST 5 PASSED")
     return True
 
-async def test_kapybara_format():
-    """测试 kapybara 新格式命令"""
+async def test_kapy_format():
+    """测试 kapy 新格式命令"""
     print("\n" + "="*80)
-    print("TEST 6: Kapybara 新格式命令测试")
+    print("TEST 6: Kapy 新格式命令测试")
     print("="*80)
     
     config = {
@@ -529,12 +529,12 @@ async def test_kapybara_format():
     await router.handle_message(msg)
     
     test_sequence = [
-        ("kapybara help", "新格式帮助"),
-        ("kapybara params", "查看配置（新格式）"),
-        ("kapybara model opus", "切换模型（新格式）"),
-        ("kapybara param thinking high", "设置参数（新格式）"),
-        ("kapybara params", "确认配置更新"),
-        ("kapybara reset", "重置（新格式）"),
+        ("kapy help", "新格式帮助"),
+        ("kapy params", "查看配置（新格式）"),
+        ("kapy model opus", "切换模型（新格式）"),
+        ("kapy param thinking high", "设置参数（新格式）"),
+        ("kapy params", "确认配置更新"),
+        ("kapy reset", "重置（新格式）"),
         ("/params", "确认重置（传统格式）"),
     ]
     
@@ -588,7 +588,7 @@ async def main():
         ("参数配置", test_param_configuration),
         ("消息发送", test_message_with_config),
         ("会话持久化", test_session_persistence),
-        ("Kapybara 新格式", test_kapybara_format),
+        ("Kapy 新格式", test_kapy_format),
     ]
     
     results = []

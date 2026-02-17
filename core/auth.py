@@ -25,6 +25,7 @@ class Auth:
         max_requests_per_minute: int = 0,
         state_file: Optional[str] = None,
         admin_users: Optional[List[str]] = None,
+        system_admin_users: Optional[List[str]] = None,
     ):
         """
         Args:
@@ -33,6 +34,7 @@ class Auth:
             max_requests_per_minute: Per-user rate limit (0 disables)
             state_file: Optional path to persist allowlist changes
             admin_users: Optional list of admin user IDs for privileged operations
+            system_admin_users: Optional list of system admin IDs for system-mode operations
         """
         # Per-channel allowed sets (values are strings)
         self._channel_allowed: Dict[str, Set[str]] = {}
@@ -42,6 +44,7 @@ class Auth:
         self.max_requests_per_minute = max_requests_per_minute
         self.state_file = Path(state_file) if state_file else None
         self.admin_users: Set[str] = set(str(a) for a in (admin_users or []))
+        self.system_admin_users: Set[str] = set(str(a) for a in (system_admin_users or []))
         self._request_log: Dict[str, Deque[float]] = defaultdict(deque)
         self._load_state()
 
@@ -138,6 +141,7 @@ class Auth:
         if allowed:
             allowed.discard(user_id)
         self.admin_users.discard(user_id)
+        self.system_admin_users.discard(user_id)
         self._save_state()
         logger.info("Removed user %s from channel %s whitelist", user_id, channel)
 
@@ -160,6 +164,20 @@ class Auth:
         self.admin_users.discard(str(user_id))
         self._save_state()
         logger.info("Revoked admin role from user %s", user_id)
+
+    def is_system_admin(self, user_id) -> bool:
+        return str(user_id) in self.system_admin_users
+
+    def add_system_admin(self, user_id: str) -> None:
+        user_id = str(user_id)
+        self.system_admin_users.add(user_id)
+        self._save_state()
+        logger.info("Granted system-admin role to user %s", user_id)
+
+    def remove_system_admin(self, user_id: str) -> None:
+        self.system_admin_users.discard(str(user_id))
+        self._save_state()
+        logger.info("Revoked system-admin role from user %s", user_id)
 
     # ── persistence ──
 
@@ -186,6 +204,10 @@ class Auth:
             if isinstance(admins, list):
                 self.admin_users = set(str(a) for a in admins)
 
+            system_admins = data.get("system_admin_users")
+            if isinstance(system_admins, list):
+                self.system_admin_users = set(str(a) for a in system_admins)
+
             logger.info("Loaded persisted auth state from %s", self.state_file)
         except Exception as e:
             logger.warning("Failed to load auth state from %s: %s", self.state_file, e)
@@ -200,6 +222,7 @@ class Auth:
                     ch: sorted(users) for ch, users in self._channel_allowed.items()
                 },
                 "admin_users": sorted(self.admin_users),
+                "system_admin_users": sorted(self.system_admin_users),
             }
             self.state_file.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"

@@ -2,25 +2,136 @@
 """
 CLI Gateway - Main entry point
 """
+import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 import time
 from pathlib import Path
 
 from utils.helpers import load_config
-from core.auth import Auth
-from core.billing import BillingTracker
-from core.session import SessionManager
-from core.router import Router
-from agents.claude_code import ClaudeCodeAgent
-from agents.codex_cli import CodexAgent
-from agents.gemini_cli import GeminiAgent
-from channels.telegram import TelegramChannel
-from channels.discord import DiscordChannel
-from channels.email import EmailChannel
-from aiohttp import web
+
+
+def parse_cli_args(argv=None):
+    """Parse runtime CLI arguments."""
+    parser = argparse.ArgumentParser(description="CLI Gateway")
+    parser.add_argument(
+        "--config",
+        default="config.yaml",
+        help="Path to config YAML file (default: config.yaml)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["session", "system"],
+        default=None,
+        help="Runtime mode override",
+    )
+    parser.add_argument(
+        "--instance-id",
+        default=None,
+        help="Instance identifier used for runtime metadata and optional path namespacing",
+    )
+    parser.add_argument(
+        "--health-port",
+        type=int,
+        default=None,
+        help="Override health check port",
+    )
+    parser.add_argument(
+        "--namespace-paths",
+        action="store_true",
+        help="Namespace writable paths by instance_id",
+    )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Validate and print resolved runtime config, then exit",
+    )
+    return parser.parse_args(argv)
+
+
+def seed_runtime_env(args) -> None:
+    """Seed runtime env vars so config can reference instance/mode placeholders."""
+    if args.instance_id:
+        os.environ["CLI_GATEWAY_INSTANCE_ID"] = str(args.instance_id)
+        os.environ["INSTANCE_ID"] = str(args.instance_id)
+    else:
+        os.environ.setdefault("CLI_GATEWAY_INSTANCE_ID", "default")
+        os.environ.setdefault("INSTANCE_ID", os.environ["CLI_GATEWAY_INSTANCE_ID"])
+
+    if args.mode:
+        os.environ["CLI_GATEWAY_MODE"] = args.mode
+    else:
+        os.environ.setdefault("CLI_GATEWAY_MODE", "session")
+
+
+def _namespace_path(path_value: str, instance_id: str, kind: str) -> str:
+    path = Path(path_value)
+    if kind == "dir":
+        return str(path / instance_id)
+    return str(path.parent / instance_id / path.name)
+
+
+def apply_runtime_overrides(config: dict, args) -> dict:
+    """Apply runtime CLI overrides onto loaded config."""
+    if config is None:
+        config = {}
+
+    runtime = config.setdefault("runtime", {})
+    runtime["mode"] = args.mode or runtime.get("mode") or "session"
+    runtime["instance_id"] = str(
+        args.instance_id or runtime.get("instance_id") or os.environ.get("CLI_GATEWAY_INSTANCE_ID", "default")
+    )
+
+    if args.health_port is not None:
+        config.setdefault("health", {})["port"] = args.health_port
+
+    if args.namespace_paths:
+        instance_id = runtime["instance_id"]
+        # Namespace writable state paths so multiple instances can run from one repo.
+        path_specs = [
+            ("auth", "state_file", "file"),
+            ("session", "workspace_base", "dir"),
+            ("billing", "dir", "dir"),
+            ("logging", "file", "file"),
+        ]
+        for section, key, kind in path_specs:
+            section_cfg = config.get(section, {})
+            value = section_cfg.get(key)
+            if not value:
+                continue
+            if instance_id in Path(str(value)).parts:
+                continue
+            section_cfg[key] = _namespace_path(str(value), instance_id, kind)
+
+        # Namespace dedicated audit log too, if enabled/configured.
+        audit_cfg = config.get("logging", {}).get("audit", {})
+        audit_file = audit_cfg.get("file")
+        if audit_file and instance_id not in Path(str(audit_file)).parts:
+            audit_cfg["file"] = _namespace_path(str(audit_file), instance_id, "file")
+
+        runtime["namespace_paths"] = True
+    else:
+        runtime["namespace_paths"] = bool(runtime.get("namespace_paths", False))
+
+    return config
+
+
+def print_runtime_summary(config: dict, args) -> None:
+    runtime = config.get("runtime", {})
+    print("✅ Config validation passed")
+    print(f"config: {args.config}")
+    print(f"mode: {runtime.get('mode')}")
+    print(f"instance_id: {runtime.get('instance_id')}")
+    print(f"namespace_paths: {runtime.get('namespace_paths')}")
+    print(f"auth.state_file: {config.get('auth', {}).get('state_file')}")
+    print(f"session.workspace_base: {config.get('session', {}).get('workspace_base')}")
+    print(f"billing.dir: {config.get('billing', {}).get('dir')}")
+    print(f"logging.file: {config.get('logging', {}).get('file')}")
+    print(f"logging.audit.file: {config.get('logging', {}).get('audit', {}).get('file')}")
+    print(f"health.port: {config.get('health', {}).get('port', 18800)}")
 
 
 # Configure logging
@@ -48,21 +159,69 @@ def setup_logging(config: dict):
     logging.getLogger('telegram').setLevel(logging.WARNING)
 
 
-async def main():
+def setup_audit_logger(config: dict):
+    """Setup dedicated JSONL audit logger if enabled."""
+    audit_conf = config.get('logging', {}).get('audit', {})
+    if not audit_conf.get('enabled', False):
+        return None
+
+    audit_file = audit_conf.get('file', './logs/audit.log')
+    Path(audit_file).parent.mkdir(parents=True, exist_ok=True)
+
+    logger = logging.getLogger('audit')
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    logger.handlers.clear()
+    handler = logging.FileHandler(audit_file)
+    handler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(handler)
+    return logger
+
+
+async def main(argv=None):
     """Main application entry point"""
-    
+    args = parse_cli_args(argv)
+    seed_runtime_env(args)
+
     # Load configuration
     try:
-        config = load_config('config.yaml')
+        config = load_config(args.config)
+        config = apply_runtime_overrides(config, args)
         logger = logging.getLogger(__name__)
     except Exception as e:
         print(f"❌ Failed to load configuration: {e}")
         sys.exit(1)
-    
+
+    if args.validate_only:
+        print_runtime_summary(config, args)
+        return
+
     # Setup logging
     setup_logging(config)
-    logger.info("Starting CLI Gateway...")
-    
+    audit_logger = setup_audit_logger(config)
+    runtime = config.get("runtime", {})
+    logger.info(
+        "Starting CLI Gateway... mode=%s instance_id=%s config=%s",
+        runtime.get("mode"),
+        runtime.get("instance_id"),
+        args.config,
+    )
+
+    # Delay heavy imports so --validate-only works without full runtime deps.
+    from aiohttp import web
+    from core.auth import Auth
+    from core.billing import BillingTracker
+    from core.session import SessionManager
+    from core.router import Router
+    from core.two_factor import TwoFactorManager
+    from core.system_executor import SystemExecutor
+    from agents.claude_code import ClaudeCodeAgent
+    from agents.codex_cli import CodexAgent
+    from agents.gemini_cli import GeminiAgent
+    from channels.telegram import TelegramChannel
+    from channels.discord import DiscordChannel
+    from channels.email import EmailChannel
+
     # Initialize components
     try:
         # Auth — build per-channel allowed_users from channel configs
@@ -79,7 +238,23 @@ async def main():
             max_requests_per_minute=auth_conf.get('max_requests_per_minute', 0),
             state_file=auth_conf.get('state_file'),
             admin_users=[str(u) for u in auth_conf.get('admin_users', [])],
+            system_admin_users=[str(u) for u in auth_conf.get('system_admin_users', [])],
         )
+
+        two_factor_conf = config.get('two_factor', {})
+        two_factor = TwoFactorManager(
+            enabled=two_factor_conf.get('enabled', False),
+            ttl_seconds=two_factor_conf.get('ttl_seconds', 300),
+            valid_window=two_factor_conf.get('valid_window', 1),
+            period_seconds=two_factor_conf.get('period_seconds', 30),
+            digits=two_factor_conf.get('digits', 6),
+            secrets_by_user=two_factor_conf.get('secrets', {}),
+        )
+        logger.info("✅ Two-factor manager initialized (enabled=%s)", two_factor.enabled)
+
+        system_ops_conf = config.get('system_ops', {})
+        system_executor = SystemExecutor(system_ops_conf)
+        logger.info("✅ System executor initialized (enabled=%s)", system_executor.enabled)
         
         # Agents
         agents = {}
@@ -149,7 +324,17 @@ async def main():
 
         # Create Router and wire up each channel
         for channel_name, channel in channels:
-            router = Router(auth, session_manager, agents, channel, config, billing=billing)
+            router = Router(
+                auth,
+                session_manager,
+                agents,
+                channel,
+                config,
+                billing=billing,
+                two_factor=two_factor,
+                system_executor=system_executor,
+                audit_logger=audit_logger,
+            )
             channel.set_message_handler(router.handle_message)
         
         logger.info("✅ All components initialized")
@@ -166,6 +351,7 @@ async def main():
             print(f"║   ✅ {name.capitalize():30s}       ║")
         print(f"║ Authorized users: {len(auth.allowed_users):2d}                  ║")
         print(f"║ Workspace: {str(workspace_base):24s}║")
+        print(f"║ Instance: {runtime.get('instance_id', 'default'):24s}║")
         print("╚════════════════════════════════════════╝")
         
         # Start all channels

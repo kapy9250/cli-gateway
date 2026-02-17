@@ -36,6 +36,9 @@ class Router:
         channel: BaseChannel,
         config: dict,
         billing: Optional[BillingTracker] = None,
+        two_factor: Optional[object] = None,
+        system_executor: Optional[object] = None,
+        audit_logger: Optional[object] = None,
     ) -> None:
         self.auth = auth
         self.session_manager = session_manager
@@ -43,6 +46,9 @@ class Router:
         self.channel = channel
         self.config = config
         self.billing = billing
+        self.two_factor = two_factor
+        self.system_executor = system_executor
+        self.audit_logger = audit_logger
         self.rules_loader = RulesLoader()
         self.formatter = OutputFormatter(config.get("formatter", {}))
 
@@ -69,6 +75,7 @@ class Router:
     def _build_pipeline(self) -> Pipeline:
         from core.middlewares.logging_mw import logging_middleware
         from core.middlewares.auth_mw import auth_middleware
+        from core.middlewares.mode_guard import mode_guard_middleware
         from core.middlewares.command_parser import command_parser_middleware
         from core.middlewares.session_resolver import session_resolver_middleware
         from core.middlewares.agent_dispatcher import agent_dispatcher_middleware
@@ -77,6 +84,7 @@ class Router:
             [
                 logging_middleware,
                 auth_middleware,
+                mode_guard_middleware,
                 command_parser_middleware,
                 session_resolver_middleware,
                 agent_dispatcher_middleware,
@@ -97,6 +105,9 @@ class Router:
             agents=self.agents,
             channel=self.channel,
             billing=self.billing,
+            two_factor=self.two_factor,
+            system_executor=self.system_executor,
+            audit_logger=self.audit_logger,
             formatter=self.formatter,
             config=self.config,
         )

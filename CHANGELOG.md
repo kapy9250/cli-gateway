@@ -1,5 +1,38 @@
 # CHANGELOG
 
+## 2026-02-17 — System Mode Security Gate + Path Hardening
+
+### Summary
+Adds security hardening for privileged runtime and aligns tests/docs with the multi-instance + dual-mode architecture.
+
+### Changes
+- Enforced **global system-mode gate** in auth middleware:
+  - when `runtime.mode=system`, only `system_admin_users` can access the bot (including non-command prompts)
+- Hardened `SystemExecutor` path checks:
+  - normalized path matching via canonicalized absolute paths
+  - blocked `..` traversal and symlink-based escapes from `write_allowed_paths`
+  - normalized sensitive-path detection for read operations
+- Fixed `read_file` resource-control gaps:
+  - user `max_bytes` is now clamped to configured `max_read_bytes`
+  - file read is streaming (`limit + 1`) instead of full-file in-memory load
+- Hardened audit logging privacy:
+  - `/sys` audit events now redact raw `text/output/stderr/stdout` payloads
+  - audit stores digest/size metadata instead of sensitive raw content
+- Completed privilege revocation behavior:
+  - `remove_user` now also revokes `system_admin` role
+- Extended path namespacing:
+  - `--namespace-paths` now includes `logging.audit.file`
+- Added regression tests:
+  - `tests/test_system_mode_security.py`
+  - `tests/test_system_executor_security.py`
+  - expanded `tests/test_auth.py` for `system_admin` role persistence/ops
+- Updated docs/config consistency:
+  - removed duplicated `codex`/`gemini` keys from `config.example.yaml`
+  - refreshed `README.md` testing and roadmap sections
+- Test hygiene / pre-commit cleanup:
+  - replaced `from tests.conftest import ...` patterns with fixture injection to avoid import collisions
+  - fixed async subprocess kill handling in `ClaudeCodeAgent` so pytest warnings are eliminated
+
 ## 2026-02-07 — Security, Stability, and Architecture Hardening
 
 ### Summary

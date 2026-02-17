@@ -36,6 +36,9 @@ class Context:
     agents: Dict[str, "BaseAgent"]
     channel: BaseChannel
     billing: Optional[BillingTracker]
+    two_factor: Optional[object]
+    system_executor: Optional[object]
+    audit_logger: Optional[object]
     formatter: OutputFormatter
     config: dict
 

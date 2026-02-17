@@ -1,13 +1,60 @@
 # CLI Gateway Configuration Template
 # Copy to config.yaml and fill in your values
 
+# ──────────── 运行时实例 ────────────
+# 可通过启动参数覆盖：
+#   --mode session|system
+#   --instance-id <id>
+#   --config <path>
+# CLI 启动时会注入环境变量：
+#   CLI_GATEWAY_MODE, CLI_GATEWAY_INSTANCE_ID, INSTANCE_ID
+runtime:
+  mode: "${CLI_GATEWAY_MODE}"
+  instance_id: "${CLI_GATEWAY_INSTANCE_ID}"
+  namespace_paths: false  # If true, writable paths are auto-namespaced by instance_id
+
 # ──────────── 鉴权 ────────────
 # 全局设置：速率限制、管理员等
 auth:
   max_requests_per_minute: 30
   admin_users:
     - 123456789  # Replace with your admin user ID
-  state_file: "./data/auth_state.json"
+  system_admin_users:
+    - 123456789  # Replace with your system-admin ID (for system mode operations)
+  state_file: "./data/${CLI_GATEWAY_INSTANCE_ID}/auth_state.json"
+
+# ──────────── Two-Factor (TOTP) ────────────
+# For system-mode sensitive actions.
+two_factor:
+  enabled: false
+  ttl_seconds: 300
+  valid_window: 1
+  period_seconds: 30
+  digits: 6
+  secrets:
+    "123456789": "BASE32SECRETEXAMPLE"
+
+# ──────────── System Ops (Gate 5 read-only) ────────────
+system_ops:
+  enabled: true
+  max_read_bytes: 65536
+  max_journal_lines: 300
+  max_docker_output_bytes: 200000
+  cron_dir: "/etc/cron.d"
+  docker_bin: "docker"
+  sensitive_read_paths:
+    - "/etc/shadow"
+    - "/etc/sudoers"
+    - "/etc/ssh"
+    - "/root"
+    - "/home"
+    - "/var/lib/docker"
+  write_allowed_paths:
+    - "/etc"
+    - "/opt"
+    - "/data"
+    - "/var"
+    - "/usr/local/etc"
 
 # ──────────── 消息通道 ────────────
 # 每个渠道有自己独立的 allowed_users 名单
@@ -108,32 +155,12 @@ agents:
       model: "-m"
       temperature: "--temp"
     default_params: {}
-  
-  codex:
-    enabled: false
-    display_name: "Codex"
-    command: "codex"
-    args_template: ["--quiet", "{prompt}", "--approval-mode", "full-auto"]
-    interactive: false
-    timeout: 300
-    max_concurrent_sessions: 2
-    env: {}
-  
-  gemini:
-    enabled: false
-    display_name: "Gemini CLI"
-    command: "gemini"
-    args_template: ["-p", "{prompt}"]
-    interactive: false
-    timeout: 300
-    max_concurrent_sessions: 2
-    env: {}
 
 # ──────────── 账单 ────────────
 # Billing files are stored outside the session workspace
 # to prevent users from accessing cost data.
 billing:
-  dir: "./data/billing"
+  dir: "./data/billing/${CLI_GATEWAY_INSTANCE_ID}"
 
 # ──────────── Watchdog ────────────
 watchdog:
@@ -145,7 +172,7 @@ watchdog:
 
 # ──────────── 会话管理 ────────────
 session:
-  workspace_base: "./workspaces"
+  workspace_base: "./workspaces/${CLI_GATEWAY_INSTANCE_ID}"
   cleanup_inactive_after_hours: 24
   cleanup_files_after_days: 7
   max_sessions_per_user: 5
@@ -153,10 +180,16 @@ session:
 # ──────────── 日志 ────────────
 logging:
   level: "INFO"
-  file: "./logs/gateway.log"
+  file: "./logs/${CLI_GATEWAY_INSTANCE_ID}/gateway.log"
   max_size_mb: 50
   backup_count: 3
   
   audit:
     enabled: true
-    file: "./logs/audit.log"
+    file: "./logs/${CLI_GATEWAY_INSTANCE_ID}/audit.log"
+
+# ──────────── 健康检查 ────────────
+# 多实例请使用不同端口（或启动时用 --health-port 覆盖）
+health:
+  host: "127.0.0.1"
+  port: 18800

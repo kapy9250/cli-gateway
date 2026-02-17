@@ -36,6 +36,7 @@ async def handle_help(ctx: "Context") -> None:
                 "name &lt;label&gt; - 为当前会话命名",
                 "cancel - 取消当前执行",
                 "history - 查看对话历史",
+                "whoami - 查看当前身份与运行模式",
                 "",
                 "<b>模型配置</b>",
                 "model [&lt;alias&gt;] - 切换模型或查看可用模型",
@@ -47,10 +48,21 @@ async def handle_help(ctx: "Context") -> None:
                 "files - 列出当前会话输出文件",
                 "download &lt;filename&gt; - 下载文件",
                 "",
+                "<b>系统审批（system 模式）</b>",
+                "sys journal [unit] [lines] - 读取系统日志",
+                "sys read <path> [--challenge id] - 读取系统文件",
+                "sys cron list|upsert|delete - 管理 cron 任务",
+                "sys docker <args...> - 执行 docker 命令",
+                "sys config write|append|delete|rollback - 管理系统配置文件",
+                "sysauth plan &lt;action&gt; - 创建 2FA 审批请求",
+                "sysauth approve &lt;id&gt; &lt;code&gt; - 提交 TOTP 审批",
+                "sysauth status &lt;id&gt; - 查看审批状态",
+                "",
                 "<b>示例</b>",
                 "<code>kapy model opus</code>",
                 "<code>kapy param thinking high</code>",
                 "<code>kapy params</code>",
+                "<code>kapy whoami</code>",
             ]
         ),
     )
@@ -94,3 +106,23 @@ async def handle_cancel(ctx: "Context") -> None:
         cancel_event.set()
     await agent.cancel(current.session_id)
     await ctx.router._reply(ctx.message, "✅ 已取消当前操作")
+
+
+@command("/whoami", "查看当前身份与运行模式")
+async def handle_whoami(ctx: "Context") -> None:
+    runtime = (ctx.config or {}).get("runtime", {})
+    mode = runtime.get("mode", "session")
+    is_admin = ctx.auth.is_admin(ctx.user_id)
+    is_system_admin = ctx.auth.is_system_admin(ctx.user_id)
+    await ctx.router._reply(
+        ctx.message,
+        "\n".join(
+            [
+                "🪪 当前身份信息",
+                f"- user_id: <code>{ctx.user_id}</code>",
+                f"- mode: <code>{mode}</code>",
+                f"- admin: <code>{str(bool(is_admin)).lower()}</code>",
+                f"- system_admin: <code>{str(bool(is_system_admin)).lower()}</code>",
+            ]
+        ),
+    )

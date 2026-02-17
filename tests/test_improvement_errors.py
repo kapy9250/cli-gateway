@@ -9,26 +9,32 @@ class TestUserFriendlyErrors:
     """Error messages should be user-facing, not developer-facing."""
 
     @pytest.mark.asyncio
-    async def test_no_python_traceback_in_output(self, auth, session_manager, sample_config, billing, tmp_path):
+    async def test_no_python_traceback_in_output(
+        self, auth, session_manager, sample_config, billing, mock_agent, fake_channel
+    ):
         """Errors should never expose Python tracebacks to users."""
         from core.router import Router
-        from tests.conftest import FakeChannel, MockAgent
+        async def _raise_error(session_id, message, model=None, params=None):
+            if False:
+                yield ""  # keep async-generator shape expected by router
+            raise Exception("Internal error: DB connection pool exhausted at line 42")
 
-        class ErrorAgent(MockAgent):
-            async def send_message(self, session_id, message, model=None, params=None):
-                raise Exception("Internal error: DB connection pool exhausted at line 42")
-
-        agent = ErrorAgent(workspace_base=tmp_path / "agent")
-        ch = FakeChannel()
-        r = Router(auth=auth, session_manager=session_manager, agents={"claude": agent},
-                    channel=ch, config=sample_config, billing=billing)
+        mock_agent.send_message = _raise_error
+        r = Router(
+            auth=auth,
+            session_manager=session_manager,
+            agents={"claude": mock_agent},
+            channel=fake_channel,
+            config=sample_config,
+            billing=billing,
+        )
 
         msg = IncomingMessage(
             channel="telegram", chat_id="c1", user_id="123",
             text="trigger error", is_private=True, is_reply_to_bot=False, is_mention_bot=False,
         )
         await r.handle_message(msg)
-        texts = [t for _, t in ch.sent]
+        texts = [t for _, t in fake_channel.sent]
         combined = " ".join(texts)
         # Should NOT contain technical details
         assert "line 42" not in combined
