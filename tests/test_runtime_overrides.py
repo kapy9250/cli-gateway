@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from main import apply_runtime_overrides
+from main import apply_runtime_overrides, validate_system_security_requirements
 
 
 def _args(instance_id: str, namespace_paths: bool = True):
@@ -45,3 +45,43 @@ def test_namespace_paths_does_not_double_namespace_audit_file():
     out = apply_runtime_overrides(cfg, _args("inst-a", namespace_paths=True))
     assert out["logging"]["file"] == "./logs/inst-a/gateway.log"
     assert out["logging"]["audit"]["file"] == "./logs/inst-a/audit.log"
+
+
+def test_validate_system_security_requirements_allows_session_mode_without_2fa():
+    runtime = {"mode": "session"}
+    auth = SimpleNamespace(system_admin_users=set())
+    two_factor = SimpleNamespace(enabled=False, secrets_by_user={})
+    validate_system_security_requirements(runtime, auth, two_factor)
+
+
+def test_validate_system_security_requirements_requires_2fa_in_system_mode():
+    runtime = {"mode": "system"}
+    auth = SimpleNamespace(system_admin_users={"123"})
+    two_factor = SimpleNamespace(enabled=False, secrets_by_user={"123": "ABC"})
+    try:
+        validate_system_security_requirements(runtime, auth, two_factor)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "two_factor.enabled=true" in str(e)
+
+
+def test_validate_system_security_requirements_requires_system_admins():
+    runtime = {"mode": "system"}
+    auth = SimpleNamespace(system_admin_users=set())
+    two_factor = SimpleNamespace(enabled=True, secrets_by_user={})
+    try:
+        validate_system_security_requirements(runtime, auth, two_factor)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "auth.system_admin_users" in str(e)
+
+
+def test_validate_system_security_requirements_requires_secrets_for_admins():
+    runtime = {"mode": "system"}
+    auth = SimpleNamespace(system_admin_users={"123", "456"})
+    two_factor = SimpleNamespace(enabled=True, secrets_by_user={"123": "ABC"})
+    try:
+        validate_system_security_requirements(runtime, auth, two_factor)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "456" in str(e)

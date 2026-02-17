@@ -136,6 +136,28 @@ def print_runtime_summary(config: dict, args) -> None:
     print(f"health.port: {config.get('health', {}).get('port', 18800)}")
 
 
+def validate_system_security_requirements(runtime: dict, auth, two_factor) -> None:
+    """Fail fast when system mode security prerequisites are not met."""
+    mode = str((runtime or {}).get("mode", "session")).lower()
+    if mode != "system":
+        return
+
+    if not bool(getattr(two_factor, "enabled", False)):
+        raise ValueError("runtime.mode=system requires two_factor.enabled=true")
+
+    system_admin_users = sorted(
+        str(uid).strip() for uid in (getattr(auth, "system_admin_users", set()) or set()) if str(uid).strip()
+    )
+    if not system_admin_users:
+        raise ValueError("runtime.mode=system requires auth.system_admin_users")
+
+    secrets_by_user = dict(getattr(two_factor, "secrets_by_user", {}) or {})
+    missing = [uid for uid in system_admin_users if not str(secrets_by_user.get(uid, "")).strip()]
+    if missing:
+        joined = ",".join(missing)
+        raise ValueError(f"missing two_factor.secrets for system_admin_users: {joined}")
+
+
 # Configure logging
 def setup_logging(config: dict):
     """Setup logging based on configuration"""
@@ -255,6 +277,7 @@ async def main(argv=None):
             secrets_by_user=two_factor_conf.get('secrets', {}),
         )
         logger.info("✅ Two-factor manager initialized (enabled=%s)", two_factor.enabled)
+        validate_system_security_requirements(runtime, auth, two_factor)
 
         system_ops_conf = config.get('system_ops', {})
         system_executor = SystemExecutor(system_ops_conf)
