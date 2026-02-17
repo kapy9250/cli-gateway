@@ -28,6 +28,9 @@ async def handle_sysauth(ctx: "Context") -> None:
     if manager is None:
         await ctx.router._reply(ctx.message, "❌ Two-factor manager not available")
         return
+    if not bool(getattr(manager, "enabled", False)):
+        await ctx.router._reply(ctx.message, "❌ two_factor.enabled=false，/sysauth 已禁用")
+        return
 
     text = (ctx.message.text or "").strip()
     parts = text.split(maxsplit=2)

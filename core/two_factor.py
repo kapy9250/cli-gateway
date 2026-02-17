@@ -133,9 +133,7 @@ class TwoFactorManager:
         if ch.action_hash != self._hash_action(payload):
             return False, "action_hash_mismatch"
         if not self.enabled:
-            ch.approved = True
-            ch.approved_at = now
-            return True, "approved_without_2fa"
+            return False, "two_factor_disabled"
 
         secret = self.secrets_by_user.get(str(user_id))
         if not secret:

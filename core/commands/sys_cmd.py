@@ -91,6 +91,12 @@ async def _require_approval(
     if manager is None:
         await ctx.router._reply(ctx.message, "❌ two-factor manager 不可用")
         return None
+    if not bool(getattr(manager, "enabled", False)):
+        await ctx.router._reply(
+            ctx.message,
+            "❌ two_factor.enabled=false，已拒绝系统操作。请先在配置中启用 2FA。",
+        )
+        return None
 
     if not challenge_id:
         challenge = manager.create_challenge(ctx.user_id, action_payload)
