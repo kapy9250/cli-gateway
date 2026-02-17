@@ -184,11 +184,9 @@ class DiscordChannel(BaseChannel):
 
         is_dm = message.guild is None
 
-        # In guilds, only respond to mentions, replies, or commands
+        # In guilds, only respond to mentions or replies
         if not is_dm and not is_mention and not is_reply_to_bot:
-            text = message.content or ""
-            if not text.startswith("/") and not text.lower().startswith("kapy "):
-                return
+            return
 
         # Process attachments
         attachments = await self._process_attachments(message)
@@ -207,6 +205,8 @@ class DiscordChannel(BaseChannel):
             is_private=is_dm,
             is_reply_to_bot=is_reply_to_bot,
             is_mention_bot=is_mention,
+            is_from_bot=bool(message.author.bot),
+            guild_id=str(message.guild.id) if message.guild else None,
             reply_to_text=reply_to_text,
             attachments=attachments,
         )

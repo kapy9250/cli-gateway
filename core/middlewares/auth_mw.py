@@ -12,6 +12,37 @@ logger = logging.getLogger(__name__)
 
 
 async def auth_middleware(ctx: "Context", call_next: Callable[[], Awaitable[None]]) -> None:
+    if ctx.channel_name == "discord":
+        discord_cfg = (ctx.config or {}).get("channels", {}).get("discord", {})
+        allow_bots = discord_cfg.get("allow_bots", discord_cfg.get("allowBots", True))
+        allowed_guilds = {str(g) for g in discord_cfg.get("allowed_guilds", [])}
+
+        if ctx.message.is_private:
+            # Discord DM: only user allowlist is honored
+            allowed, reason = ctx.auth.check_detailed(ctx.user_id, channel=ctx.channel_name)
+            if not allowed:
+                if reason == "rate_limited":
+                    await ctx.router._reply(ctx.message, "⚠️ 请求过于频繁，请稍后再试")
+                else:
+                    logger.warning("Unauthorized Discord DM user_id=%s", ctx.user_id)
+                    await ctx.router._reply(ctx.message, "⚠️ 未授权访问")
+                return
+            await call_next()
+            return
+
+        # Discord guild: must be in guild whitelist
+        guild_id = str(ctx.message.guild_id) if ctx.message.guild_id else ""
+        if guild_id not in allowed_guilds:
+            logger.warning("Unauthorized Discord guild_id=%s user_id=%s", guild_id, ctx.user_id)
+            return
+
+        # If bot messages are disabled, reject bot-authored guild messages.
+        if getattr(ctx.message, "is_from_bot", False) and not allow_bots:
+            return
+
+        await call_next()
+        return
+
     allowed, reason = ctx.auth.check_detailed(ctx.user_id, channel=ctx.channel_name)
     if not allowed:
         if reason == "rate_limited":

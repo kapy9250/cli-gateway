@@ -25,6 +25,8 @@ class IncomingMessage:
     is_private: bool  # Is this a private chat?
     is_reply_to_bot: bool  # Is this replying to bot's message?
     is_mention_bot: bool  # Does this mention the bot?
+    is_from_bot: bool = False  # Is the sender a bot account?
+    guild_id: Optional[str] = None  # Discord guild id for server messages
     reply_to_text: Optional[str] = None  # Original message being replied to
     attachments: List[Attachment] = None  # File attachments
     session_hint: Optional[str] = None  # Session ID hint from channel (e.g. from email thread)
