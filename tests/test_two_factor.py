@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 from core.two_factor import TwoFactorManager
@@ -35,3 +36,47 @@ def test_enabled_two_factor_requires_valid_totp_code():
     ok, reason = manager.approve_challenge(challenge.challenge_id, "u1", code, action)
     assert ok is True
     assert reason == "approved"
+
+
+def test_enrollment_verify_persists_secret_state(tmp_path):
+    state_file = tmp_path / "two_factor_state.json"
+    manager = TwoFactorManager(enabled=True, state_file=str(state_file), issuer="CLI Gateway")
+
+    enrollment = manager.begin_enrollment("u1", account_name="ops-a:u1")
+    assert enrollment["secret"]
+    assert enrollment["otpauth_uri"].startswith("otpauth://totp/")
+    assert enrollment["already_configured"] is False
+
+    code = manager._totp_code(enrollment["secret"], time.time())
+    ok, reason = manager.verify_enrollment("u1", code)
+    assert ok is True
+    assert reason == "enrollment_verified"
+    assert manager.secrets_by_user["u1"] == enrollment["secret"]
+
+    payload = json.loads(state_file.read_text(encoding="utf-8"))
+    assert payload["secrets"]["u1"] == enrollment["secret"]
+
+
+def test_enrollment_status_and_cancel():
+    manager = TwoFactorManager(enabled=True)
+    st0 = manager.enrollment_status("u1")
+    assert st0["configured"] is False
+    assert st0["pending"] is False
+
+    manager.begin_enrollment("u1", account_name="ops-a:u1")
+    st1 = manager.enrollment_status("u1")
+    assert st1["pending"] is True
+
+    assert manager.cancel_enrollment("u1") is True
+    st2 = manager.enrollment_status("u1")
+    assert st2["pending"] is False
+
+
+def test_state_file_loaded_on_startup(tmp_path):
+    state_file = tmp_path / "two_factor_state.json"
+    state_file.write_text(
+        json.dumps({"version": 1, "secrets": {"u1": "STATESECRET123456"}}),
+        encoding="utf-8",
+    )
+    manager = TwoFactorManager(enabled=True, state_file=str(state_file), secrets_by_user={"u1": "CONFIGSECRET999999"})
+    assert manager.secrets_by_user["u1"] == "STATESECRET123456"

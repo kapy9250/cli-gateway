@@ -28,9 +28,12 @@ auth:
 two_factor:
   enabled: false
   ttl_seconds: 300
+  enrollment_ttl_seconds: 600
   valid_window: 1
   period_seconds: 30
   digits: 6
+  issuer: "CLI Gateway"
+  state_file: "./data/${CLI_GATEWAY_INSTANCE_ID}/two_factor_state.json"
   secrets:
     "123456789": "BASE32SECRETEXAMPLE"
 

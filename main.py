@@ -93,6 +93,7 @@ def apply_runtime_overrides(config: dict, args) -> dict:
         # Namespace writable state paths so multiple instances can run from one repo.
         path_specs = [
             ("auth", "state_file", "file"),
+            ("two_factor", "state_file", "file"),
             ("session", "workspace_base", "dir"),
             ("billing", "dir", "dir"),
             ("logging", "file", "file"),
@@ -127,6 +128,7 @@ def print_runtime_summary(config: dict, args) -> None:
     print(f"instance_id: {runtime.get('instance_id')}")
     print(f"namespace_paths: {runtime.get('namespace_paths')}")
     print(f"auth.state_file: {config.get('auth', {}).get('state_file')}")
+    print(f"two_factor.state_file: {config.get('two_factor', {}).get('state_file')}")
     print(f"session.workspace_base: {config.get('session', {}).get('workspace_base')}")
     print(f"billing.dir: {config.get('billing', {}).get('dir')}")
     print(f"logging.file: {config.get('logging', {}).get('file')}")
@@ -155,7 +157,11 @@ def validate_system_security_requirements(runtime: dict, auth, two_factor) -> No
     missing = [uid for uid in system_admin_users if not str(secrets_by_user.get(uid, "")).strip()]
     if missing:
         joined = ",".join(missing)
-        raise ValueError(f"missing two_factor.secrets for system_admin_users: {joined}")
+        logging.getLogger(__name__).warning(
+            "system mode started without pre-seeded 2FA secrets for system_admin_users: %s. "
+            "Those users must finish /sysauth setup before approving /sys operations.",
+            joined,
+        )
 
 
 # Configure logging
@@ -275,6 +281,9 @@ async def main(argv=None):
             period_seconds=two_factor_conf.get('period_seconds', 30),
             digits=two_factor_conf.get('digits', 6),
             secrets_by_user=two_factor_conf.get('secrets', {}),
+            state_file=two_factor_conf.get('state_file'),
+            enrollment_ttl_seconds=two_factor_conf.get('enrollment_ttl_seconds', 600),
+            issuer=two_factor_conf.get('issuer', 'CLI Gateway'),
         )
         logger.info("✅ Two-factor manager initialized (enabled=%s)", two_factor.enabled)
         validate_system_security_requirements(runtime, auth, two_factor)
