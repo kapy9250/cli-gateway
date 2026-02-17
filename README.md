@@ -100,6 +100,7 @@ python system_service_main.py --config /etc/cli-gateway/ops-a.yaml
 ```
 
 建议在 `system_service.allowed_peer_uids` 中限制可调用该 socket 的本地 UID（通常是 `cli-gateway` 用户）。
+并配置 `system_service.socket_mode/socket_uid/socket_gid`，确保非 root 网关进程可访问该 Unix socket。
 
 所有 `/sys` 操作会写入审计日志（`logging.audit.file`，JSONL）。
 审计日志默认会对 `text/output/stderr/stdout` 做脱敏，仅记录摘要元数据。

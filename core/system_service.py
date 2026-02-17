@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import socket
 import struct
 from pathlib import Path
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Union
 
 
 class SystemServiceServer:
@@ -23,6 +24,9 @@ class SystemServiceServer:
         max_request_bytes: int = 131072,
         require_grant_ops: Optional[Set[str]] = None,
         allowed_peer_uids: Optional[Set[int]] = None,
+        socket_mode: Optional[Union[int, str]] = None,
+        socket_uid: Optional[int] = None,
+        socket_gid: Optional[int] = None,
     ):
         self.socket_path = str(socket_path)
         self.executor = executor
@@ -42,6 +46,9 @@ class SystemServiceServer:
             }
         )
         self.allowed_peer_uids = set(int(v) for v in (allowed_peer_uids or set()))
+        self.socket_mode = self._normalize_mode(socket_mode)
+        self.socket_uid = None if socket_uid is None else int(socket_uid)
+        self.socket_gid = None if socket_gid is None else int(socket_gid)
         self._server: Optional[asyncio.AbstractServer] = None
 
     async def start(self) -> None:
@@ -50,6 +57,7 @@ class SystemServiceServer:
         if sock.exists():
             sock.unlink()
         self._server = await asyncio.start_unix_server(self._handle_conn, path=self.socket_path)
+        self._apply_socket_permissions()
 
     async def stop(self) -> None:
         if self._server:
@@ -133,6 +141,34 @@ class SystemServiceServer:
         wire = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
         writer.write(wire.encode("utf-8"))
         await writer.drain()
+
+    @staticmethod
+    def _normalize_mode(mode: Optional[Union[int, str]]) -> Optional[int]:
+        if mode is None:
+            return None
+        if isinstance(mode, int):
+            return mode
+        text = str(mode).strip().lower()
+        if not text:
+            return None
+        if text.startswith("0o"):
+            text = text[2:]
+        if text.startswith("0") and len(text) > 1:
+            text = text[1:]
+        return int(text, 8)
+
+    def _apply_socket_permissions(self) -> None:
+        p = Path(self.socket_path)
+        if not p.exists():
+            return
+        if self.socket_mode is not None:
+            os.chmod(p, self.socket_mode)
+        if self.socket_uid is not None or self.socket_gid is not None:
+            os.chown(
+                p,
+                self.socket_uid if self.socket_uid is not None else -1,
+                self.socket_gid if self.socket_gid is not None else -1,
+            )
 
     def _requires_grant(self, action: dict) -> bool:
         op = str((action or {}).get("op", "")).strip().lower()

@@ -62,6 +62,9 @@ system_ops:
 system_service:
   enabled: false
   socket_path: "/run/cli-gateway/system.sock"
+  socket_mode: "0660"
+  socket_uid: null
+  socket_gid: null
   timeout_seconds: 10
   grant_secret: "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
   grant_ttl_seconds: 60

@@ -67,6 +67,9 @@ def build_server(config: dict, args) -> SystemServiceServer:
         max_request_bytes=int(system_cfg.get("max_request_bytes", 131072)),
         require_grant_ops=require_grant_ops,
         allowed_peer_uids=allowed_peer_uids,
+        socket_mode=system_cfg.get("socket_mode"),
+        socket_uid=system_cfg.get("socket_uid"),
+        socket_gid=system_cfg.get("socket_gid"),
     )
 
 
@@ -85,6 +88,9 @@ async def main(argv=None):
         print(f"max_request_bytes: {server.max_request_bytes}")
         print(f"require_grant_ops: {sorted(server.require_grant_ops)}")
         print(f"allowed_peer_uids: {sorted(server.allowed_peer_uids)}")
+        print(f"socket_mode: {oct(server.socket_mode) if server.socket_mode is not None else None}")
+        print(f"socket_uid: {server.socket_uid}")
+        print(f"socket_gid: {server.socket_gid}")
         return
 
     await server.start()

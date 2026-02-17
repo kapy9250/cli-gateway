@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 import uuid
 from pathlib import Path
 
@@ -127,3 +129,16 @@ def test_peer_uid_policy_disabled_allows_unknown_uid():
         allowed_peer_uids=set(),
     )
     assert server._is_peer_uid_allowed(None) is True
+
+
+def test_socket_mode_is_applied(tmp_path):
+    socket_path = tmp_path / "mode.sock"
+    socket_path.touch()
+    server = SystemServiceServer(
+        socket_path=str(socket_path),
+        executor=FakeExecutor(),
+        socket_mode="0640",
+    )
+    server._apply_socket_permissions()
+    mode = stat.S_IMODE(os.stat(socket_path).st_mode)
+    assert mode == 0o640
