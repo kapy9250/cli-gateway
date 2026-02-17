@@ -106,3 +106,31 @@ def test_merge_replaces_placeholder_totp_secret():
 
     assert out["two_factor"]["secrets"]["286194552"] != "BASE32SECRETEXAMPLE"
     assert meta["generated_secret_users"] == ["286194552"]
+
+
+def test_merge_prefers_privileged_auth_and_two_factor():
+    base = _base_config()
+    base["auth"]["system_admin_users"] = ["1001"]
+    base["two_factor"] = {
+        "enabled": True,
+        "secrets": {
+            "1001": "BASE32SECRETEXAMPLE",
+        },
+    }
+    privileged = {
+        "auth": {
+            "system_admin_users": ["2002"],
+        },
+        "two_factor": {
+            "enabled": True,
+            "secrets": {
+                "2002": "KEEPSECRETABC2345",
+            },
+        },
+    }
+
+    out, meta = merge_ops_config(base, privileged)
+
+    assert out["auth"]["system_admin_users"] == ["2002"]
+    assert out["two_factor"]["secrets"]["2002"] == "KEEPSECRETABC2345"
+    assert meta["generated_secret_users"] == []

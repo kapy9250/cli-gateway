@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import os
 import shutil
 import sys
+import tempfile
 import urllib.parse
 from pathlib import Path
 from typing import Optional
@@ -32,7 +34,27 @@ def _load_yaml(path: Path) -> dict:
 
 def _write_yaml(path: Path, config: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    mode = 0o600
+    content = yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
+
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(tmp_path, mode)
+        if path.exists():
+            current = path.stat()
+            try:
+                os.chown(tmp_path, current.st_uid, current.st_gid)
+            except PermissionError:
+                # Best effort; ownership may require elevated privileges.
+                pass
+        os.replace(tmp_path, path)
+        os.chmod(path, mode)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -50,7 +72,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--channel-profile",
         choices=["keep", "telegram-only"],
-        default="keep",
+        default="telegram-only",
         help="Channel enablement profile for ops instance",
     )
     p.add_argument("--no-backup", action="store_true", help="Do not create backup if output file exists")

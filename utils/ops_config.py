@@ -29,6 +29,16 @@ def _normalize_user_list(values) -> List[str]:
     return users
 
 
+def _merge_dicts(base: dict, override: dict) -> dict:
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_dicts(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
 def merge_ops_config(
     base_config: dict,
     privileged_config: Optional[dict] = None,
@@ -75,19 +85,25 @@ def merge_ops_config(
     health["host"] = str(health_host)
     health["port"] = int(health_port)
 
-    auth = cfg.setdefault("auth", {})
+    auth = cfg.get("auth")
     if not isinstance(auth, dict):
         auth = {}
-        cfg["auth"] = auth
+    privileged_auth = privileged.get("auth")
+    if isinstance(privileged_auth, dict):
+        auth = _merge_dicts(auth, privileged_auth)
+    cfg["auth"] = auth
     system_admin_users = _normalize_user_list(auth.get("system_admin_users"))
     if not system_admin_users:
         system_admin_users = _normalize_user_list(auth.get("admin_users"))
     auth["system_admin_users"] = system_admin_users
 
-    two_factor = cfg.setdefault("two_factor", {})
+    two_factor = cfg.get("two_factor")
     if not isinstance(two_factor, dict):
         two_factor = {}
-        cfg["two_factor"] = two_factor
+    privileged_two_factor = privileged.get("two_factor")
+    if isinstance(privileged_two_factor, dict):
+        two_factor = _merge_dicts(two_factor, privileged_two_factor)
+    cfg["two_factor"] = two_factor
     if enable_two_factor:
         two_factor["enabled"] = True
     two_factor.setdefault("ttl_seconds", 300)
