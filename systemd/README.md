@@ -28,6 +28,27 @@ python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 ```
 
+## Bootstrap Ops Config
+
+Generate a full `%i.yaml` for system mode from an existing gateway config:
+
+```bash
+cd /opt/cli-gateway
+./.venv/bin/python scripts/bootstrap_ops_config.py \
+  --source-config /data/workspaces/cli-gateway/config.yaml \
+  --privileged-config /etc/cli-gateway/ops-a.yaml \
+  --output /etc/cli-gateway/ops-a.yaml \
+  --instance-id ops-a \
+  --health-port 18810 \
+  --channel-profile telegram-only \
+  --print-otpauth
+```
+
+Notes:
+- Use a dedicated `health.port` per instance to avoid bind conflicts.
+- `telegram-only` is recommended for system ops instances to reduce attack surface.
+- If `cli-gateway.service` (legacy single-instance unit) is present, disable it to avoid token conflicts.
+
 ## Install
 
 ```bash

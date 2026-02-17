@@ -407,12 +407,8 @@ async def main(argv=None):
         print(f"║ System backend: {('remote' if system_client else 'local'):19s}║")
         print("╚════════════════════════════════════════╝")
         
-        # Start all channels
-        for channel_name, channel in channels:
-            await channel.start()
-            logger.info(f"✅ {channel_name} channel started")
-
-        # Start health-check HTTP server
+        # Start health-check HTTP server first so a port conflict fails fast
+        # before any channel side-effects (e.g. Telegram long polling) happen.
         start_time = time.time()
         health_port = config.get('health', {}).get('port', 18800)
 
@@ -431,8 +427,29 @@ async def main(argv=None):
         await health_runner.setup()
         health_host = config.get('health', {}).get('host', '127.0.0.1')
         health_site = web.TCPSite(health_runner, health_host, health_port)
-        await health_site.start()
+        try:
+            await health_site.start()
+        except Exception:
+            await health_runner.cleanup()
+            raise
         logger.info("✅ Health endpoint listening on :%d/health", health_port)
+
+        # Start all channels
+        started_channels = []
+        try:
+            for channel_name, channel in channels:
+                await channel.start()
+                started_channels.append((channel_name, channel))
+                logger.info(f"✅ {channel_name} channel started")
+        except Exception:
+            for channel_name, channel in reversed(started_channels):
+                try:
+                    await channel.stop()
+                    logger.info("✅ %s stopped after startup failure", channel_name)
+                except Exception as stop_err:
+                    logger.warning("Failed to stop %s after startup failure: %s", channel_name, stop_err)
+            await health_runner.cleanup()
+            raise
 
         logger.info("🚀 CLI Gateway is running")
 
@@ -457,7 +474,7 @@ async def main(argv=None):
         # Shutdown all channels
         logger.info("Shutting down...")
         await health_runner.cleanup()
-        for channel_name, channel in channels:
+        for channel_name, channel in reversed(started_channels):
             await channel.stop()
             logger.info(f"✅ {channel_name} stopped")
 

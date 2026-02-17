@@ -111,6 +111,26 @@ python3 -m venv .venv
 `cli-gateway-system@<id>` 仍是完整网关进程，需要 `<id>.yaml` 提供 `session/agents/channels` 等配置。
 如果只验证 root 执行桥接，可仅启动 `cli-gateway-sys-executor@<id>`（最小 `system_service/system_ops` 配置即可）。
 
+可使用脚本从现有配置自动生成 ops 配置：
+
+```bash
+./.venv/bin/python scripts/bootstrap_ops_config.py \
+  --source-config /data/workspaces/cli-gateway/config.yaml \
+  --privileged-config /etc/cli-gateway/ops-a.yaml \
+  --output /etc/cli-gateway/ops-a.yaml \
+  --instance-id ops-a \
+  --health-port 18810 \
+  --channel-profile telegram-only \
+  --print-otpauth
+```
+
+建议为每个实例使用独立 `health.port`，并确保同一 Telegram token 只由一个运行实例使用。
+若系统中仍有 legacy `cli-gateway.service`，建议停用以避免重复拉起 bot：
+
+```bash
+sudo systemctl disable --now cli-gateway.service
+```
+
 建议在 `system_service.allowed_peer_uids` 中限制可调用该 socket 的本地 UID（通常是 `cli-gateway` 用户）。
 并配置 `system_service.socket_mode/socket_uid/socket_gid`，确保非 root 网关进程可访问该 Unix socket。
 

@@ -29,10 +29,29 @@ sudo systemd-analyze verify /etc/systemd/system/cli-gateway-sys-executor@.servic
 Expected:
 - no syntax errors
 
-## 3) Start Session + Ops + Executor Instances
+## 3) Bootstrap Ops Config (Recommended)
+
+```bash
+./.venv/bin/python scripts/bootstrap_ops_config.py \
+  --source-config /data/workspaces/cli-gateway/config.yaml \
+  --privileged-config /etc/cli-gateway/ops-a.yaml \
+  --output /etc/cli-gateway/ops-a.yaml \
+  --instance-id ops-a \
+  --health-port 18810 \
+  --channel-profile telegram-only \
+  --print-otpauth
+```
+
+Expected:
+- `ops-a.yaml` contains full `session/agents/channels` + preserved privileged `system_ops/system_service`
+- missing `two_factor.secrets` for `system_admin_users` are generated
+- health port is unique for this instance
+
+## 4) Start Session + Ops + Executor Instances
 
 ```bash
 sudo systemctl daemon-reload
+sudo systemctl disable --now cli-gateway.service || true
 sudo systemctl enable --now cli-gateway-session@bot-a
 sudo systemctl enable --now cli-gateway-system@ops-a
 sudo systemctl enable --now cli-gateway-sys-executor@ops-a
@@ -48,8 +67,9 @@ Note:
 Expected:
 - all services active
 - separate config/state/workspace/log paths
+- no Telegram `Conflict` errors caused by duplicate bot instances
 
-## 4) Identity & Mode Gate
+## 5) Identity & Mode Gate
 
 In chat:
 - `kapy whoami`
@@ -61,7 +81,7 @@ Expected:
 - session mode blocks system commands
 - system mode blocks all access for non-system-admin users
 
-## 5) 2FA Challenge Flow
+## 6) 2FA Challenge Flow
 
 In system instance chat:
 - `kapy sysauth plan rotate-nginx`
@@ -73,7 +93,7 @@ Expected:
 - approval succeeds only with valid TOTP
 - challenge status changes as expected
 
-## 6) Sensitive Read Flow
+## 7) Sensitive Read Flow
 
 In system instance chat:
 - `kapy sys read /etc/shadow` (should require challenge)
@@ -84,7 +104,7 @@ Expected:
 - sensitive read requires 2FA
 - approved challenge can be consumed once
 
-## 7) Write/Ops Flow
+## 8) Write/Ops Flow
 
 In system instance chat:
 - `kapy sys cron list`
@@ -95,7 +115,7 @@ Expected:
 - write/docker operations require challenge
 - after approval operations execute and return result
 
-## 8) Audit & Rollback
+## 9) Audit & Rollback
 
 - Check audit log path from `logging.audit.file`
 - Ensure `/sys` operations emit JSONL events
@@ -106,7 +126,7 @@ Expected:
 - every system op has audit entry
 - rollback restores target content from backup
 
-## 9) Canary Window
+## 10) Canary Window
 
 Observe for 24h:
 - restart count
@@ -121,7 +141,7 @@ journalctl -u cli-gateway-system@ops-a -n 200 --no-pager
 journalctl -u cli-gateway-sys-executor@ops-a -n 200 --no-pager
 ```
 
-## 10) Rollback
+## 11) Rollback
 
 ```bash
 sudo systemctl disable --now cli-gateway-system@ops-a
