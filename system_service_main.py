@@ -97,13 +97,17 @@ async def main(argv=None):
     logger.info("Privileged system service listening on %s", server.socket_path)
 
     stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
-    def _on_signal(signum, _frame):
+    def _request_stop(signum):
         logger.info("Received signal %s, stopping system service...", signum)
         stop_event.set()
 
-    signal.signal(signal.SIGINT, _on_signal)
-    signal.signal(signal.SIGTERM, _on_signal)
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _request_stop, int(sig))
+        except NotImplementedError:
+            signal.signal(sig, lambda s, _f: _request_stop(int(s)))
 
     await stop_event.wait()
     await server.stop()

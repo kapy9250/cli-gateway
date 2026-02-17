@@ -413,13 +413,18 @@ async def main(argv=None):
 
         # Wait for shutdown signal
         shutdown_event = asyncio.Event()
-        
-        def signal_handler(sig, frame):
-            logger.info(f"Received signal {sig}, shutting down...")
+
+        loop = asyncio.get_running_loop()
+
+        def _request_shutdown(sig_num: int):
+            logger.info(f"Received signal {sig_num}, shutting down...")
             shutdown_event.set()
-        
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _request_shutdown, int(sig))
+            except NotImplementedError:
+                signal.signal(sig, lambda s, _f: _request_shutdown(int(s)))
         
         # Keep running
         await shutdown_event.wait()
