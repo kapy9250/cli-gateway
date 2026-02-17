@@ -58,6 +58,7 @@ def build_server(config: dict, args) -> SystemServiceServer:
     )
     executor = SystemExecutor(config.get("system_ops", {}))
     require_grant_ops = set(str(v) for v in system_cfg.get("require_grant_ops", [])) or None
+    allowed_peer_uids = set(int(v) for v in system_cfg.get("allowed_peer_uids", [])) or None
     return SystemServiceServer(
         socket_path=socket_path,
         executor=executor,
@@ -65,6 +66,7 @@ def build_server(config: dict, args) -> SystemServiceServer:
         request_timeout_seconds=float(system_cfg.get("request_timeout_seconds", 15.0)),
         max_request_bytes=int(system_cfg.get("max_request_bytes", 131072)),
         require_grant_ops=require_grant_ops,
+        allowed_peer_uids=allowed_peer_uids,
     )
 
 
@@ -82,6 +84,7 @@ async def main(argv=None):
         print(f"request_timeout_seconds: {server.request_timeout_seconds}")
         print(f"max_request_bytes: {server.max_request_bytes}")
         print(f"require_grant_ops: {sorted(server.require_grant_ops)}")
+        print(f"allowed_peer_uids: {sorted(server.allowed_peer_uids)}")
         return
 
     await server.start()

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
+import struct
 from pathlib import Path
 from typing import Dict, Optional, Set
 
@@ -20,6 +22,7 @@ class SystemServiceServer:
         request_timeout_seconds: float = 15.0,
         max_request_bytes: int = 131072,
         require_grant_ops: Optional[Set[str]] = None,
+        allowed_peer_uids: Optional[Set[int]] = None,
     ):
         self.socket_path = str(socket_path)
         self.executor = executor
@@ -38,6 +41,7 @@ class SystemServiceServer:
                 "config_rollback",
             }
         )
+        self.allowed_peer_uids = set(int(v) for v in (allowed_peer_uids or set()))
         self._server: Optional[asyncio.AbstractServer] = None
 
     async def start(self) -> None:
@@ -58,6 +62,13 @@ class SystemServiceServer:
 
     async def _handle_conn(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
+            peer_uid = self._extract_peer_uid(writer)
+            if not self._is_peer_uid_allowed(peer_uid):
+                await self._reply(
+                    writer,
+                    {"ok": False, "reason": "peer_uid_not_allowed", "peer_uid": peer_uid},
+                )
+                return
             raw = await asyncio.wait_for(reader.readline(), timeout=self.request_timeout_seconds)
             if not raw:
                 await self._reply(writer, {"ok": False, "reason": "empty_request"})
@@ -80,6 +91,43 @@ class SystemServiceServer:
                 await writer.wait_closed()
             except Exception:
                 pass
+
+    def _is_peer_uid_allowed(self, peer_uid: Optional[int]) -> bool:
+        if not self.allowed_peer_uids:
+            return True
+        if peer_uid is None:
+            return False
+        return int(peer_uid) in self.allowed_peer_uids
+
+    @staticmethod
+    def _extract_peer_uid(writer: asyncio.StreamWriter) -> Optional[int]:
+        """Best-effort peer UID extraction for Unix domain sockets.
+
+        Linux uses SO_PEERCRED; BSD/macOS may expose getpeereid.
+        """
+        sock = writer.get_extra_info("socket")
+        if sock is None:
+            return None
+
+        # Linux: ucred(pid, uid, gid)
+        if hasattr(socket, "SO_PEERCRED"):
+            try:
+                size = struct.calcsize("3i")
+                raw = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
+                _pid, uid, _gid = struct.unpack("3i", raw)
+                return int(uid)
+            except Exception:
+                pass
+
+        # BSD/macOS: getpeereid()
+        try:
+            getpeereid = getattr(sock, "getpeereid", None)
+            if callable(getpeereid):
+                uid, _gid = getpeereid()
+                return int(uid)
+        except Exception:
+            pass
+        return None
 
     async def _reply(self, writer: asyncio.StreamWriter, payload: Dict[str, object]) -> None:
         wire = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"

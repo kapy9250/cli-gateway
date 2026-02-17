@@ -107,3 +107,23 @@ async def test_sensitive_read_requires_grant(tmp_path):
         assert allowed.get("sensitive") is True
     finally:
         await server.stop()
+
+
+def test_peer_uid_allowlist_policy_logic():
+    server = SystemServiceServer(
+        socket_path="/tmp/unused.sock",
+        executor=FakeExecutor(),
+        allowed_peer_uids={1001},
+    )
+    assert server._is_peer_uid_allowed(1001) is True
+    assert server._is_peer_uid_allowed(1002) is False
+    assert server._is_peer_uid_allowed(None) is False
+
+
+def test_peer_uid_policy_disabled_allows_unknown_uid():
+    server = SystemServiceServer(
+        socket_path="/tmp/unused.sock",
+        executor=FakeExecutor(),
+        allowed_peer_uids=set(),
+    )
+    assert server._is_peer_uid_allowed(None) is True

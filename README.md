@@ -99,6 +99,8 @@ python system_service_main.py --config /etc/cli-gateway/ops-a.yaml --validate-on
 python system_service_main.py --config /etc/cli-gateway/ops-a.yaml
 ```
 
+建议在 `system_service.allowed_peer_uids` 中限制可调用该 socket 的本地 UID（通常是 `cli-gateway` 用户）。
+
 所有 `/sys` 操作会写入审计日志（`logging.audit.file`，JSONL）。
 审计日志默认会对 `text/output/stderr/stdout` 做脱敏，仅记录摘要元数据。
 灰度与上线步骤见：`docs/OPERATIONS_ROLLOUT.md`

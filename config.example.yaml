@@ -65,6 +65,9 @@ system_service:
   timeout_seconds: 10
   grant_secret: "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
   grant_ttl_seconds: 60
+  # Optional: only allow requests from these local UNIX peer UIDs.
+  # For example, set to the uid of the non-root gateway process.
+  allowed_peer_uids: []
   request_timeout_seconds: 15
   max_request_bytes: 131072
   require_grant_ops:
