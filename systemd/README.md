@@ -13,9 +13,10 @@ Config scope:
 Both templates load:
 
 - config: `/etc/cli-gateway/%i.yaml`
-- env: `/etc/cli-gateway/%i.env` (optional)
+- env: `/etc/cli-gateway/%i.env` (optional, loaded after defaults)
 - runtime flags: `--instance-id %i --namespace-paths`
-- default `CODEX_HOME`: `/opt/cli-gateway/data/codex-home-%i` (override in `%i.env` if needed)
+- default `HOME`: `/opt/cli-gateway/data/home-%i`
+- default `CODEX_HOME`: `/opt/cli-gateway/data/home-%i/.codex`
 
 Python runtime behavior:
 - units prefer `/opt/cli-gateway/.venv/bin/python3`
@@ -49,7 +50,8 @@ Notes:
 - Use a dedicated `health.port` per instance to avoid bind conflicts.
 - `telegram-only` is recommended for system ops instances to reduce attack surface.
 - If `cli-gateway.service` (legacy single-instance unit) is present, disable it to avoid token conflicts.
-- For Codex CLI auth, copy/prepare `auth.json` under the configured `CODEX_HOME` and ensure it is readable by the service user.
+- CLI agents are invoked locally (`claude` / `codex` / `gemini`) and should use local CLI auth state, not injected API keys.
+- Prepare local auth files under the instance `HOME` (for example: `.codex/auth.json`, `.claude/.credentials.json`, `.gemini/settings.json`) and ensure they are readable by the service user.
 
 ## Install
 

@@ -11,11 +11,13 @@ User=cli-gateway
 Group=cli-gateway
 
 WorkingDirectory=/opt/cli-gateway
-EnvironmentFile=-/etc/cli-gateway/%i.env
 # Prefer project venv, fallback to system Python if missing.
 Environment=PATH=/opt/cli-gateway/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-# Keep Codex runtime/state under writable instance-scoped data path.
-Environment=CODEX_HOME=/opt/cli-gateway/data/codex-home-%i
+# Keep CLI auth/state under writable instance-scoped data path.
+Environment=HOME=/opt/cli-gateway/data/home-%i
+Environment=CODEX_HOME=/opt/cli-gateway/data/home-%i/.codex
+# Optional per-instance overrides (can replace HOME/CODEX_HOME).
+EnvironmentFile=-/etc/cli-gateway/%i.env
 ExecStart=/usr/bin/env python3 /opt/cli-gateway/main.py --mode session --instance-id %i --config /etc/cli-gateway/%i.yaml --namespace-paths
 
 Restart=always
