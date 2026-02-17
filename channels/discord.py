@@ -25,6 +25,7 @@ class DiscordChannel(BaseChannel):
         self.token = config['token']
         self.max_length = config.get('max_message_length', 2000)
         self.allowed_guilds = set(config.get('allowed_guilds', []))
+        self.allow_bots = config.get('allow_bots', config.get('allowBots', True))
 
         # Setup intents
         intents = Intents.default()
@@ -157,8 +158,8 @@ class DiscordChannel(BaseChannel):
         if message.author.id == self.bot_id:
             return
 
-        # Ignore bots (optional, configurable)
-        if message.author.bot:
+        # Ignore bot-authored messages only when explicitly disabled
+        if message.author.bot and not self.allow_bots:
             return
 
         # Cache the channel object for later send_text lookups

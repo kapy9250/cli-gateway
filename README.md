@@ -1,6 +1,6 @@
 # CLI Gateway
 
-**通用 CLI 代理网关** - 通过 Telegram 访问 Claude Code、Codex、Gemini 等 CLI 工具
+**通用 CLI 代理网关** - 通过 Telegram / Discord / Email 访问 Claude Code、Codex、Gemini 等 CLI 工具
 
 [![Tests](https://img.shields.io/badge/tests-6%2F6%20passing-brightgreen)](TEST_REPORT.md)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org)
@@ -15,7 +15,7 @@
 - 💾 **会话持久化** - 重启后自动恢复会话
 - 📡 **流式输出** - 实时显示 agent 响应
 - 📎 **附件支持** - 发送图片、文档给 agent
-- 🎯 **两种命令格式** - 支持 `/model` 和 `kapybara model` 两种格式
+- 🎯 **两种命令格式** - 支持 `/model` 和 `kapy model` 两种格式
 - 🔌 **可扩展架构** - 轻松添加新的 CLI 工具
 
 ---
@@ -39,6 +39,7 @@ nano config.yaml
 
 编辑 `config.yaml`：
 - 设置 Telegram bot token
+- 如使用 Discord，设置 Discord bot token（可选 `allow_bots: true/false`，默认 `true`）
 - 添加你的 Telegram user ID
 - 配置 Claude Code CLI 路径
 
@@ -58,10 +59,10 @@ python main.py
 
 | 传统格式 | 新格式（推荐） | 说明 |
 |----------|---------------|------|
-| `/help` | `kapybara help` | 显示帮助 |
-| `/model opus` | `kapybara model opus` | 切换模型 |
-| `/param thinking high` | `kapybara param thinking high` | 设置参数 |
-| `/params` | `kapybara params` | 查看配置 |
+| `/help` | `kapy help` | 显示帮助 |
+| `/model opus` | `kapy model opus` | 切换模型 |
+| `/param thinking high` | `kapy param thinking high` | 设置参数 |
+| `/params` | `kapy params` | 查看配置 |
 
 **新格式的优势：**
 - 不与 Telegram 的 `/` 命令冲突
@@ -73,30 +74,30 @@ python main.py
 ### 会话管理
 
 ```bash
-kapybara agent claude      # 切换到 Claude Code
-kapybara sessions          # 列出所有会话
-kapybara current           # 查看当前会话
-kapybara switch <id>       # 切换会话
-kapybara kill              # 销毁当前会话
+kapy agent claude      # 切换到 Claude Code
+kapy sessions          # 列出所有会话
+kapy current           # 查看当前会话
+kapy switch <id>       # 切换会话
+kapy kill              # 销毁当前会话
 ```
 
 ### 模型配置
 
 ```bash
-kapybara model             # 列出可用模型
-kapybara model opus        # 切换到 opus
-kapybara model sonnet      # 切换到 sonnet
-kapybara model haiku       # 切换到 haiku
+kapy model             # 列出可用模型
+kapy model opus        # 切换到 opus
+kapy model sonnet      # 切换到 sonnet
+kapy model haiku       # 切换到 haiku
 ```
 
 ### 参数配置
 
 ```bash
-kapybara param             # 列出可用参数
-kapybara param thinking high    # 设置 thinking 模式
-kapybara param max_turns 5      # 设置最大轮数
-kapybara params            # 查看当前配置
-kapybara reset             # 重置为默认配置
+kapy param             # 列出可用参数
+kapy param thinking high    # 设置 thinking 模式
+kapy param max_turns 5      # 设置最大轮数
+kapy params            # 查看当前配置
+kapy reset             # 重置为默认配置
 ```
 
 ### 发送消息
@@ -140,7 +141,7 @@ kapybara reset             # 重置为默认配置
 - **Router** - 命令路由和消息转发
 - **SessionManager** - 会话管理和持久化
 - **Agent** - CLI 工具适配器（Claude Code, Codex, Gemini）
-- **Channel** - 消息平台适配器（Telegram）
+- **Channel** - 消息平台适配器（Telegram / Discord / Email）
 
 ---
 
@@ -194,7 +195,7 @@ python tests/manual_test_bot.py
 - ✅ 参数配置
 - ✅ 消息发送
 - ✅ 会话持久化
-- ✅ Kapybara 新格式
+- ✅ kapy 新格式
 
 **测试结果：6/6 通过** 🎉
 

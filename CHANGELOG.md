@@ -22,7 +22,7 @@ This update closes all 24 issues identified during the multi-review code audit (
 - Added RBAC foundation (`admin_users`, `is_admin`, `add_admin`, `remove_admin`).
 - Refactored duplicated agent lifecycle logic into `BaseAgent` helpers.
 - Added retry/backoff + fallback behavior for message edit failures during streaming.
-- Reworked fragile `kapybara` command parsing to token-based normalization.
+- Reworked fragile `kapy` command parsing to token-based normalization.
 - Added stale-session workspace cleanup and managed workspace deletion on session destroy.
 - Added atomic session-state save (`tmp + replace`) with save lock.
 - Enforced `max_sessions_per_user` from config.

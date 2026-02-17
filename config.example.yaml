@@ -27,6 +27,7 @@ channels:
     token: "${DISCORD_BOT_TOKEN}"  # Set via environment variable
     max_message_length: 2000
     allowed_guilds: []  # Empty = allow all guilds
+    allow_bots: true  # When true, accepts messages from other Discord bots
     members_intent: false  # Set true if you need member info
     allowed_users:
       - 123456789  # Replace with your Discord user ID

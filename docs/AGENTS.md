@@ -56,9 +56,9 @@ agents:
 ### 使用示例
 
 ```
-kapybara model opus
-kapybara param thinking high
-kapybara param max_turns 5
+kapy model opus
+kapy param thinking high
+kapy param max_turns 5
 ```
 
 ---
@@ -100,9 +100,9 @@ agents:
 ### 使用示例
 
 ```
-kapybara agent codex
-kapybara param temperature 0.7
-kapybara param max_tokens 2000
+kapy agent codex
+kapy param temperature 0.7
+kapy param max_tokens 2000
 ```
 
 ---
@@ -142,8 +142,8 @@ agents:
 ### 使用示例
 
 ```
-kapybara agent gemini
-kapybara param temperature 0.8
+kapy agent gemini
+kapy param temperature 0.8
 ```
 
 ---
