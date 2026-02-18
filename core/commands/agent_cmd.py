@@ -41,23 +41,33 @@ async def handle_agent(ctx: "Context") -> None:
         return
 
     # Record preference
-    router._user_agent_pref[str(ctx.message.user_id)] = agent_name
+    user_key = str(ctx.message.user_id)
+    router._user_agent_pref[user_key] = agent_name
 
-    # Destroy current session so next message auto-creates with new agent
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
-    if current:
-        old_agent = ctx.agents.get(current.agent_name)
-        if old_agent:
-            try:
-                await old_agent.destroy_session(current.session_id)
-            except Exception:
-                logger.warning("Failed to destroy old session %s, ignoring", current.session_id)
-        try:
-            ctx.session_manager.destroy_session(current.session_id)
-        finally:
-            router.pop_session_lock(current.session_id)
+    # Create and activate a new session immediately for better UX.
+    target_agent = ctx.agents[agent_name]
+    try:
+        info = await target_agent.create_session(user_id=ctx.message.user_id, chat_id=ctx.message.chat_id)
+    except Exception as e:
+        logger.warning("Failed to create new %s session after /agent switch: %s", agent_name, e)
+        await router._reply(
+            ctx.message,
+            f"✅ 已切换到 {agent_name}，但创建会话失败，请发送下一条消息重试",
+        )
+        return
 
+    agent_config = ctx.config.get("agents", {}).get(agent_name, {})
+    model = router._user_model_pref.pop(user_key, None) or agent_config.get("default_model")
+    params = agent_config.get("default_params", {}).copy()
+    managed = ctx.session_manager.create_session(
+        user_id=ctx.message.user_id,
+        chat_id=ctx.message.chat_id,
+        agent_name=agent_name,
+        session_id=info.session_id,
+        model=model,
+        params=params,
+    )
     await router._reply(
         ctx.message,
-        f"✅ 已切换到 {agent_name}，下次发消息时自动创建会话",
+        f"✅ 已切换到 {agent_name}，当前会话: <code>{managed.session_id}</code>",
     )

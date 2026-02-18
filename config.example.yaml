@@ -133,7 +133,7 @@ system_service:
   socket_mode: "0660"
   socket_uid: null
   socket_gid: null
-  timeout_seconds: 10
+  timeout_seconds: 120
   grant_secret: "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
   grant_ttl_seconds: 60
   # Security default: require explicit local UID allowlist for socket callers.

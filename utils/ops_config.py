@@ -141,6 +141,7 @@ def merge_ops_config(
     allowed_peer_units = system_service.get("allowed_peer_units")
     if not isinstance(allowed_peer_units, list) or not any(str(v).strip() for v in allowed_peer_units):
         system_service["allowed_peer_units"] = [f"cli-gateway-system@{instance_id}.service"]
+    system_service.setdefault("timeout_seconds", 120)
     system_service.setdefault("require_grant_for_all_ops", True)
 
     channel_enabled = {}

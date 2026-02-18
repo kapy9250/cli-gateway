@@ -33,11 +33,14 @@ class TestAgentCommand:
         assert "agent" in text.lower() or "Agent" in text
 
     @pytest.mark.asyncio
-    async def test_agent_switch(self, multi_agent_router, make_message, fake_channel):
+    async def test_agent_switch(self, multi_agent_router, make_message, fake_channel, session_manager):
         await multi_agent_router.handle_message(make_message(text="/agent codex"))
         text = fake_channel.last_sent_text()
         assert "codex" in text.lower()
         assert "切换" in text or "✅" in text
+        current = session_manager.get_active_session("123")
+        assert current is not None
+        assert current.agent_name == "codex"
 
     @pytest.mark.asyncio
     async def test_agent_switch_invalid(self, router, make_message, fake_channel):

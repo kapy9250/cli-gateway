@@ -298,7 +298,7 @@ async def main(argv=None):
         system_grant = None
         if bool(system_service_conf.get("enabled", False)):
             socket_path = str(system_service_conf.get("socket_path", "/run/cli-gateway/system.sock"))
-            timeout_seconds = float(system_service_conf.get("timeout_seconds", 10.0))
+            timeout_seconds = float(system_service_conf.get("timeout_seconds", 120.0))
             system_client = SystemServiceClient(socket_path=socket_path, timeout_seconds=timeout_seconds)
 
             grant_secret = str(system_service_conf.get("grant_secret", "")).strip()
