@@ -194,6 +194,67 @@ class TestSendMessage:
         assert "".join(chunks) == "hello world"
 
     @pytest.mark.asyncio
+    async def test_send_message_remote_stream_rollout_recorder_error_is_suppressed(self, tmp_path, codex_config):
+        stderr = (
+            "2026-02-18T18:17:42Z ERROR codex_core::codex: failed to record rollout items: "
+            "failed to queue rollout items: channel closed\n"
+            "ERROR: Failed to shutdown rollout recorder\n"
+        )
+        remote = FakeRemoteStreamClient(
+            [
+                {"event": "chunk", "stream": "stdout", "data": "@songsjun 你好"},
+                {"event": "done", "ok": False, "returncode": 1, "stderr": stderr},
+            ]
+        )
+        agent = CodexAgent(
+            "codex",
+            codex_config,
+            tmp_path,
+            runtime_mode="session",
+            instance_id="user-main",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        chunks = []
+        async for chunk in agent.send_message(session.session_id, "test"):
+            chunks.append(chunk)
+
+        text = "".join(chunks)
+        assert text == "@songsjun 你好"
+        assert "远程执行失败" not in text
+
+    @pytest.mark.asyncio
+    async def test_send_message_remote_stream_hides_channel_context_stderr_dump(self, tmp_path, codex_config):
+        remote = FakeRemoteStreamClient(
+            [
+                {
+                    "event": "done",
+                    "ok": False,
+                    "returncode": 1,
+                    "stderr": "Error header\n[CHANNEL CONTEXT]\nvery long dump\n",
+                }
+            ]
+        )
+        agent = CodexAgent(
+            "codex",
+            codex_config,
+            tmp_path,
+            runtime_mode="session",
+            instance_id="user-main",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        chunks = []
+        async for chunk in agent.send_message(session.session_id, "test"):
+            chunks.append(chunk)
+
+        text = "".join(chunks)
+        assert "远程执行失败" in text
+        assert "[CHANNEL CONTEXT]" not in text
+
+    @pytest.mark.asyncio
     async def test_send_message_fails_closed_when_remote_required_but_unconfigured(self, tmp_path, codex_config):
         agent = CodexAgent(
             "codex",

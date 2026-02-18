@@ -7,6 +7,7 @@ This module factors it out into a single reusable class.
 import asyncio
 import logging
 import os
+import re
 import uuid
 import time
 from pathlib import Path
@@ -26,6 +27,56 @@ class StreamingCliAgent(BaseAgent):
     """
 
     agent_label: str = "CLI"  # Override in subclass for log messages
+    _ROLLOUT_NOISE_RE = re.compile(
+        r"(failed to record rollout items|failed to queue rollout items: channel closed|failed to shutdown rollout recorder)",
+        flags=re.IGNORECASE,
+    )
+
+    @classmethod
+    def _is_rollout_recorder_exit(cls, stderr: str) -> bool:
+        text = str(stderr or "")
+        return bool(cls._ROLLOUT_NOISE_RE.search(text))
+
+    @classmethod
+    def _user_facing_error_detail(cls, stderr: str) -> str:
+        """Return a short safe error detail for chat output, omitting prompt/context dumps."""
+        text = str(stderr or "")
+        if not text:
+            return ""
+        if "[CHANNEL CONTEXT]" in text or "[SENDER CONTEXT]" in text:
+            return ""
+
+        blocked_prefixes = (
+            "openai codex v",
+            "workdir:",
+            "model:",
+            "provider:",
+            "approval:",
+            "sandbox:",
+            "reasoning",
+            "session id:",
+            "mcp startup:",
+            "thinking",
+            "codex",
+            "user",
+            "[channel context]",
+            "[sender context]",
+        )
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            lower = line.lower()
+            if cls._ROLLOUT_NOISE_RE.search(lower):
+                continue
+            if lower.startswith(blocked_prefixes):
+                continue
+            if line.startswith("@"):
+                continue
+            if len(line) > 280:
+                line = line[:280] + "..."
+            return line
+        return ""
 
     async def create_session(
         self,
@@ -131,6 +182,15 @@ class StreamingCliAgent(BaseAgent):
                         if stderr:
                             logger.warning(f"{self.agent_label} stderr: {stderr}")
 
+                        if (
+                            bool(frame.get("returncode", 0)) == 1
+                            and saw_stdout_chunk
+                            and self._is_rollout_recorder_exit(stderr)
+                        ):
+                            # Codex CLI may emit final content but exit 1 due rollout-recorder shutdown noise.
+                            # Keep the successful streamed answer and suppress misleading failure tail.
+                            return
+
                         if bool(frame.get("ok", False)):
                             return
 
@@ -143,8 +203,9 @@ class StreamingCliAgent(BaseAgent):
                             else:
                                 reason = "remote_exec_failed"
                         yield f"❌ 远程执行失败: {reason}"
-                        if stderr:
-                            yield f"\nError: {stderr}"
+                        detail = self._user_facing_error_detail(stderr)
+                        if detail:
+                            yield f"\nError: {detail}"
                         return
 
                     # Stream ended without terminal frame.
