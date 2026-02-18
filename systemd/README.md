@@ -63,6 +63,7 @@ Notes:
 - `sys-executor` can run AI CLI via root-owned `bwrap` with per-session workspace constraints; this avoids host policies that block unprivileged user namespaces.
 - For `system_ops.agent_cli.bwrap`, keep `unshare_user=false` unless you explicitly need user namespaces; this avoids host UID-mapping side effects on bind-mounted `CODEX_HOME`.
 - `system_ops.agent_cli.bwrap.session_workspace_only=true` enables strict session isolation: session callers see only `/workspace`, `/sandbox-home`, and minimal runtime read-only mounts.
+- `system_service.require_for_session=true` (default) makes session mode fail-closed: if remote sys-executor is unavailable, agent CLI execution is rejected instead of falling back to local execution.
 
 ## Install
 
