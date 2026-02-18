@@ -169,6 +169,31 @@ class TestSendMessage:
         assert action["stream"] is True
 
     @pytest.mark.asyncio
+    async def test_send_message_remote_stream_does_not_duplicate_done_stdout(self, tmp_path, codex_config):
+        remote = FakeRemoteStreamClient(
+            [
+                {"event": "chunk", "stream": "stdout", "data": "hello "},
+                {"event": "chunk", "stream": "stdout", "data": "world"},
+                {"event": "done", "ok": True, "returncode": 0, "stdout": "hello world"},
+            ]
+        )
+        agent = CodexAgent(
+            "codex",
+            codex_config,
+            tmp_path,
+            runtime_mode="session",
+            instance_id="user-main",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        chunks = []
+        async for chunk in agent.send_message(session.session_id, "test"):
+            chunks.append(chunk)
+
+        assert "".join(chunks) == "hello world"
+
+    @pytest.mark.asyncio
     async def test_send_message_fails_closed_when_remote_required_but_unconfigured(self, tmp_path, codex_config):
         agent = CodexAgent(
             "codex",

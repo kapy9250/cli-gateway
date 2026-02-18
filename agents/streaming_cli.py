@@ -97,6 +97,7 @@ class StreamingCliAgent(BaseAgent):
             )
             if remote_stream is not None:
                 stderr_chunks: list[str] = []
+                saw_stdout_chunk = False
                 try:
                     async for frame in remote_stream:
                         if not isinstance(frame, dict):
@@ -114,6 +115,7 @@ class StreamingCliAgent(BaseAgent):
                             if stream_name == "stderr":
                                 stderr_chunks.append(data)
                                 continue
+                            saw_stdout_chunk = True
                             yield data
                             continue
 
@@ -122,7 +124,7 @@ class StreamingCliAgent(BaseAgent):
 
                         stdout = str(frame.get("stdout", "") or "")
                         stderr = str(frame.get("stderr", "") or "").strip()
-                        if stdout:
+                        if stdout and not saw_stdout_chunk:
                             yield stdout
                         if not stderr:
                             stderr = "".join(stderr_chunks).strip()
