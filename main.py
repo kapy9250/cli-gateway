@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from utils.helpers import load_config
+from utils.runtime_version import detect_runtime_version
 
 
 def parse_cli_args(argv=None):
@@ -84,6 +85,7 @@ def apply_runtime_overrides(config: dict, args) -> dict:
     runtime["instance_id"] = str(
         args.instance_id or runtime.get("instance_id") or os.environ.get("CLI_GATEWAY_INSTANCE_ID", "default")
     )
+    runtime["version"] = detect_runtime_version()
 
     if args.health_port is not None:
         config.setdefault("health", {})["port"] = args.health_port
@@ -126,6 +128,7 @@ def print_runtime_summary(config: dict, args) -> None:
     print(f"config: {args.config}")
     print(f"mode: {runtime.get('mode')}")
     print(f"instance_id: {runtime.get('instance_id')}")
+    print(f"version: {runtime.get('version')}")
     print(f"namespace_paths: {runtime.get('namespace_paths')}")
     print(f"auth.state_file: {config.get('auth', {}).get('state_file')}")
     print(f"two_factor.state_file: {config.get('two_factor', {}).get('state_file')}")

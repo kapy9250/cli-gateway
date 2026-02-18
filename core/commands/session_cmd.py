@@ -14,6 +14,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _runtime_version(ctx: "Context") -> str:
+    runtime = (ctx.config or {}).get("runtime", {})
+    return str(runtime.get("version", "unknown") or "unknown")
+
+
 @command("/sessions", "列出所有会话")
 async def handle_sessions(ctx: "Context") -> None:
     scope_id = ctx.router.get_scope_id(ctx.message)
@@ -34,12 +39,13 @@ async def handle_sessions(ctx: "Context") -> None:
 async def handle_current(ctx: "Context") -> None:
     scope_id = ctx.router.get_scope_id(ctx.message)
     current = ctx.session_manager.get_active_session_for_scope(scope_id)
+    version = _runtime_version(ctx)
     if not current:
-        await ctx.router._reply(ctx.message, "当前无活跃会话")
+        await ctx.router._reply(ctx.message, f"当前无活跃会话\n版本: <code>{version}</code>")
         return
     await ctx.router._reply(
         ctx.message,
-        f"当前会话: {current.session_id}\nAgent: {current.agent_name}",
+        f"当前会话: {current.session_id}\nAgent: {current.agent_name}\n版本: <code>{version}</code>",
     )
 
 

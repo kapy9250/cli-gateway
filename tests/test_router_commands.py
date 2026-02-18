@@ -82,15 +82,19 @@ class TestCurrentCommand:
     @pytest.mark.asyncio
     async def test_current_no_session(self, router, make_message, fake_channel):
         await router.handle_message(make_message(text="/current"))
-        assert "无活跃" in fake_channel.last_sent_text() or "无" in fake_channel.last_sent_text()
+        text = fake_channel.last_sent_text()
+        assert "无活跃" in text or "无" in text
+        assert "版本" in text
 
     @pytest.mark.asyncio
     async def test_current_show(self, router, make_message, fake_channel, session_manager):
+        router.config.setdefault("runtime", {})["version"] = "git:test123"
         session_manager.create_session("123", "chat_1", "claude", session_id="s1")
         await router.handle_message(make_message(text="/current"))
         text = fake_channel.last_sent_text()
         assert "s1" in text
         assert "claude" in text
+        assert "git:test123" in text
 
 
 class TestSwitchCommand:
