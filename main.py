@@ -340,10 +340,17 @@ async def main(argv=None):
         runtime_mode = normalize_runtime_mode(runtime.get("mode", "session"))
         runtime_instance_id = str(runtime.get("instance_id", "default")).strip() or "default"
         require_remote_agent_cli_in_session = bool(system_service_conf.get("require_for_session", True))
+        require_remote_agent_cli_in_system = bool(system_service_conf.get("require_for_system", True))
         if runtime_mode == "session" and require_remote_agent_cli_in_session and system_client is None:
             logger.error(
                 "❌ runtime.mode=session requires system_service.enabled=true "
                 "(set system_service.require_for_session=false to override)"
+            )
+            sys.exit(1)
+        if runtime_mode == "system" and require_remote_agent_cli_in_system and system_client is None:
+            logger.error(
+                "❌ runtime.mode=system requires system_service.enabled=true "
+                "(set system_service.require_for_system=false to override)"
             )
             sys.exit(1)
         remote_exec_required = runtime_mode == "session" and require_remote_agent_cli_in_session

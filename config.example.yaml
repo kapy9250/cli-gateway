@@ -121,13 +121,15 @@ system_ops:
         - "/etc/nsswitch.conf"
 
 # ──────────── Privileged System Service Bridge ────────────
-# enabled=true 时，/sys 命令改为通过本地 Unix Socket 调用 root 侧 system_service_main.py。
-# 2FA 通过后会签发短时授权票据，由 system service 二次验签后执行。
+# enabled=true 时，Agent CLI 通过本地 Unix Socket 调用 root 侧 system_service_main.py。
+# sys 模式 + /sudo on（2FA）窗口内，agent CLI 将以 root 身份执行。
 system_service:
   enabled: false
   # Security default: in session mode, model CLI must go through sys-executor (no local fallback).
   # Set false only for local/dev troubleshooting.
   require_for_session: true
+  # Security default: in sys mode, require sys-executor; keeps /sudo semantics fail-closed.
+  require_for_system: true
   socket_path: "/run/cli-gateway/system.sock"
   socket_parent_mode: "0700"
   socket_mode: "0660"

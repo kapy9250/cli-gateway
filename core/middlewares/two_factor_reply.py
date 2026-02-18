@@ -56,7 +56,7 @@ async def two_factor_reply_middleware(ctx: "Context", call_next: Callable[[], Aw
         if "--challenge" not in retry_cmd and challenge_id:
             retry_cmd = f"{retry_cmd} --challenge {challenge_id}"
 
-        # Rewrite this message into the stored /sys command, then continue.
+        # Rewrite this message into the stored command (e.g. /sudo on), then continue.
         ctx.message = replace(ctx.message, text=retry_cmd)
         await call_next()
         return

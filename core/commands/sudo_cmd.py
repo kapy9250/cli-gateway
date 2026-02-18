@@ -106,6 +106,13 @@ async def handle_sudo(ctx: "Context") -> None:
         await ctx.router._reply(ctx.message, "⚠️ 仅 system_admin 可使用 /sudo")
         return
 
+    if getattr(ctx, "system_client", None) is None:
+        await ctx.router._reply(
+            ctx.message,
+            "❌ 当前实例未连接 system_service，sudo 不可用（fail-closed）",
+        )
+        return
+
     text = (ctx.message.text or "").strip()
     try:
         parts = shlex.split(text)
