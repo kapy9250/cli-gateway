@@ -63,7 +63,14 @@ class StreamingCliAgent(BaseAgent):
         logger.info(f"Created {self.agent_label} session {sid} at {work_dir}")
         return session
 
-    async def send_message(self, session_id: str, message: str, model: str = None, params: dict = None) -> AsyncIterator[str]:
+    async def send_message(
+        self,
+        session_id: str,
+        message: str,
+        model: str = None,
+        params: dict = None,
+        run_as_root: bool = False,
+    ) -> AsyncIterator[str]:
         """Send message to CLI and stream output line by line."""
         session = self.sessions.get(session_id)
         if not session:
@@ -86,6 +93,7 @@ class StreamingCliAgent(BaseAgent):
                 args=args,
                 env=env,
                 timeout_seconds=int(timeout),
+                run_as_root=bool(run_as_root),
             )
             if remote_resp is not None:
                 if not remote_resp.get("ok", False):

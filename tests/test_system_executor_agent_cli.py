@@ -269,3 +269,80 @@ def test_agent_cli_exec_system_mode_keeps_wider_readonly_mounts(tmp_path: Path):
     assert "--ro-bind-try /etc /etc" in joined
     tmpfs_targets = [run_args[i + 1] for i, token in enumerate(run_args[:-1]) if token == "--tmpfs"]
     assert "/etc" not in tmpfs_targets
+
+
+def test_agent_cli_exec_rejects_root_exec_in_session_mode(tmp_path: Path):
+    cfg = _base_config(tmp_path)
+    executor = SystemExecutor(cfg)
+    cwd = tmp_path / "workspaces" / "user-main" / "codex" / "sess_1"
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    action = {
+        "op": "agent_cli_exec",
+        "agent": "codex",
+        "mode": "session",
+        "instance_id": "user-main",
+        "command": "codex",
+        "args": ["exec", "hello"],
+        "cwd": str(cwd),
+        "env": {},
+        "timeout_seconds": 30,
+        "run_as_root": True,
+    }
+
+    with patch("shutil.which", return_value="/usr/bin/codex"):
+        result = executor.agent_cli_exec(
+            action,
+            peer_uid=999,
+            peer_units={"cli-gateway-session@user-main.service"},
+        )
+
+    assert result["ok"] is False
+    assert result["reason"] == "root_exec_forbidden_in_mode"
+
+
+def test_agent_cli_exec_system_root_bypasses_setpriv_and_bwrap(tmp_path: Path):
+    cfg = _base_config(tmp_path)
+    cfg["agent_cli"]["bwrap"] = {"enabled": True, "required": True}
+    executor = SystemExecutor(cfg)
+    cwd = tmp_path / "workspaces" / "ops-a" / "codex" / "sess_1"
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    action = {
+        "op": "agent_cli_exec",
+        "agent": "codex",
+        "mode": "system",
+        "instance_id": "ops-a",
+        "command": "codex",
+        "args": ["exec", "hello"],
+        "cwd": str(cwd),
+        "env": {},
+        "timeout_seconds": 30,
+        "run_as_root": True,
+    }
+    completed = Mock(returncode=0, stdout="ok", stderr="")
+
+    def _which(name: str) -> str | None:
+        if name == "codex":
+            return "/usr/bin/codex"
+        if name == "setpriv":
+            return "/usr/bin/setpriv"
+        return None
+
+    with (
+        patch("os.geteuid", return_value=0),
+        patch("os.getegid", return_value=0),
+        patch("shutil.which", side_effect=_which),
+        patch("subprocess.run", return_value=completed) as run_mock,
+    ):
+        result = executor.agent_cli_exec(
+            action,
+            peer_uid=0,
+            peer_units={"cli-gateway-system@ops-a.service"},
+        )
+
+    assert result["ok"] is True
+    assert result["run_as_root"] is True
+    run_args = run_mock.call_args[0][0]
+    assert run_args[:2] == ["codex", "exec"]
+    assert run_args[0] != "bwrap"

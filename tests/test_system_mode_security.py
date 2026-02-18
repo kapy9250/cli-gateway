@@ -62,7 +62,7 @@ class TestSystemModeAuthGate:
         )
 
         await router.handle_message(make_message(text="kapy sys journal 10"))
-        assert "session 模式" in (fake_channel.last_sent_text() or "")
+        assert "/sys 指令已下线" in (fake_channel.last_sent_text() or "")
         assert not mock_agent.messages_received
 
     @pytest.mark.asyncio

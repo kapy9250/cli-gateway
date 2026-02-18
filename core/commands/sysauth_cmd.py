@@ -134,7 +134,7 @@ async def _handle_setup(ctx: "Context", manager) -> None:
             return
         await ctx.router._reply(
             ctx.message,
-            "✅ 2FA 绑定成功并已保存。后续可使用 /sysauth approve 与 /sys 系统命令。",
+            "✅ 2FA 绑定成功并已保存。后续可使用 /sudo on 开启提权。",
         )
         return
 

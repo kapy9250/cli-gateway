@@ -3,7 +3,7 @@
 
 # ──────────── 运行时实例 ────────────
 # 可通过启动参数覆盖：
-#   --mode session|system
+#   --mode user|sys
 #   --instance-id <id>
 #   --config <path>
 # CLI 启动时会注入环境变量：
@@ -14,7 +14,7 @@ runtime:
   namespace_paths: false  # If true, writable paths are auto-namespaced by instance_id
 
 # ──────────── User Mode Sandbox (bubblewrap) ────────────
-# Applied only when runtime.mode=session.
+# Applied only when runtime.mode=user.
 # If bwrap is unavailable and required=false, service falls back to direct execution.
 sandbox:
   bwrap:

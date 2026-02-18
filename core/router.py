@@ -19,6 +19,7 @@ from core.rules import RulesLoader
 from core.session import SessionManager
 from core.session_scope import build_scope_id, build_scope_workspace_dir
 from utils.constants import MAX_ATTACHMENT_SIZE_BYTES
+from utils.runtime_mode import is_system_mode
 
 # Importing commands triggers @command decorators → populates the registry
 import core.commands  # noqa: F401
@@ -41,6 +42,7 @@ class Router:
         system_executor: Optional[object] = None,
         system_client: Optional[object] = None,
         system_grant: Optional[object] = None,
+        sudo_state: Optional[object] = None,
         audit_logger: Optional[object] = None,
     ) -> None:
         self.auth = auth
@@ -53,6 +55,7 @@ class Router:
         self.system_executor = system_executor
         self.system_client = system_client
         self.system_grant = system_grant
+        self.sudo_state = sudo_state
         self.audit_logger = audit_logger
         self.rules_loader = RulesLoader()
         self.formatter = OutputFormatter(config.get("formatter", {}))
@@ -119,6 +122,7 @@ class Router:
             system_executor=self.system_executor,
             system_client=self.system_client,
             system_grant=self.system_grant,
+            sudo_state=self.sudo_state,
             audit_logger=self.audit_logger,
             formatter=self.formatter,
             config=self.config,
@@ -128,7 +132,10 @@ class Router:
         except Exception:
             logger.error("Unhandled error processing message from user=%s", message.user_id, exc_info=True)
             try:
-                await self.channel.send_text(message.chat_id, "❌ 内部错误，请稍后重试")
+                await self.channel.send_text(
+                    message.chat_id,
+                    self.format_outbound_text(message, "❌ 内部错误，请稍后重试"),
+                )
             except Exception:
                 pass  # channel itself might be broken
 
@@ -147,7 +154,57 @@ class Router:
 
     async def _reply(self, message: IncomingMessage, text: str) -> None:
         """Send a formatted reply, auto-converting markup for the channel."""
-        await self.channel.send_text(message.chat_id, self._fmt(message.channel, text))
+        await self.channel.send_text(message.chat_id, self.format_outbound_text(message, text))
+
+    def _sudo_footer(self, message: IncomingMessage) -> str:
+        if not is_system_mode(((self.config or {}).get("runtime") or {}).get("mode")):
+            return ""
+        status = self.get_sudo_status(message.user_id, message.channel, message.chat_id)
+        state = "on" if status.get("enabled") else "off"
+        return f"\n\nsudo: <code>{state}</code>"
+
+    def format_outbound_text(self, message: IncomingMessage, text: str) -> str:
+        body = str(text or "")
+        body += self._sudo_footer(message)
+        return self._fmt(message.channel, body)
+
+    def get_sudo_status(self, user_id: str, channel: str, chat_id: str) -> dict:
+        manager = self.sudo_state
+        if manager is None:
+            return {"enabled": False, "remaining_seconds": 0, "expires_at": None}
+        try:
+            return manager.status(user_id=str(user_id), channel=str(channel), chat_id=str(chat_id))
+        except Exception:
+            return {"enabled": False, "remaining_seconds": 0, "expires_at": None}
+
+    def is_sudo_enabled(self, message: IncomingMessage) -> bool:
+        if not is_system_mode(((self.config or {}).get("runtime") or {}).get("mode")):
+            return False
+        status = self.get_sudo_status(message.user_id, message.channel, message.chat_id)
+        return bool(status.get("enabled", False))
+
+    def enable_sudo(self, message: IncomingMessage, ttl_seconds: int = 600) -> dict:
+        manager = self.sudo_state
+        if manager is None:
+            return {"enabled": False, "remaining_seconds": 0, "expires_at": None}
+        return manager.enable(
+            user_id=str(message.user_id),
+            channel=str(message.channel),
+            chat_id=str(message.chat_id),
+            ttl_seconds=int(ttl_seconds),
+        )
+
+    def disable_sudo(self, message: IncomingMessage) -> bool:
+        manager = self.sudo_state
+        if manager is None:
+            return False
+        return bool(
+            manager.disable(
+                user_id=str(message.user_id),
+                channel=str(message.channel),
+                chat_id=str(message.chat_id),
+            )
+        )
 
     def get_scope_id(self, message: IncomingMessage) -> str:
         """Return scope key for this incoming message."""
@@ -241,8 +298,8 @@ class Router:
                     accepted.append(att)
             if rejected:
                 limit_mb = MAX_ATTACHMENT_SIZE_BYTES // 1024 // 1024
-                await self.channel.send_text(
-                    message.chat_id,
+                await self._reply(
+                    message,
                     f"⚠️ 以下附件超过 {limit_mb}MB 限制，已跳过：\n" + "\n".join(f"- {r}" for r in rejected),
                 )
             message.attachments = accepted

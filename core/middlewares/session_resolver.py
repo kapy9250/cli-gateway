@@ -23,7 +23,7 @@ async def session_resolver_middleware(ctx: "Context", call_next: Callable[[], Aw
 
     agent = ctx.agents.get(current.agent_name)
     if agent is None:
-        await ctx.channel.send_text(ctx.message.chat_id, f"❌ Agent 不存在: {current.agent_name}")
+        await ctx.router._reply(ctx.message, f"❌ Agent 不存在: {current.agent_name}")
         return
 
     # ── Recover if agent lost the session (e.g. after restart) ──
@@ -76,8 +76,8 @@ async def _ensure_session(ctx: "Context") -> Optional["ManagedSession"]:
         agent_name = router._get_scope_agent(scope_id)
         agent = ctx.agents.get(agent_name)
         if agent is None:
-            await ctx.channel.send_text(
-                message.chat_id,
+            await ctx.router._reply(
+                message,
                 f"❌ Agent 不可用: {agent_name}，可用: {', '.join(ctx.agents.keys())}",
             )
             return None
@@ -123,7 +123,7 @@ async def _recover_stale_session(ctx: "Context", agent, current):
         )
     except Exception as e:  # noqa: BLE001
         logger.exception("Failed to recover stale session %s: %s", current.session_id, e)
-        await ctx.channel.send_text(message.chat_id, "❌ 会话恢复失败，请稍后重试")
+        await ctx.router._reply(message, "❌ 会话恢复失败，请稍后重试")
         return None
 
     ctx.session_manager.update_work_dir(current.session_id, str(info.work_dir))

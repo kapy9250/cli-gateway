@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from core.command_registry import command, registry
+from utils.runtime_mode import is_system_mode, to_external_mode
 
 if TYPE_CHECKING:
     from core.pipeline import Context
@@ -49,12 +50,9 @@ async def handle_help(ctx: "Context") -> None:
                 "download &lt;filename&gt; - 下载文件",
                 "",
                 "<b>系统审批（system 模式）</b>",
-                "所有 sys 命令都需要 challenge：先执行命令拿到 challenge_id，再 /sysauth approve 后重试",
-                "sys journal [unit] [lines] - 读取系统日志",
-                "sys read <path> [--challenge id] - 读取系统文件",
-                "sys cron list|upsert|delete - 管理 cron 任务",
-                "sys docker <args...> - 执行 docker 命令",
-                "sys config write|append|delete|rollback - 管理系统配置文件",
+                "sudo status - 查看 sudo 开关状态",
+                "sudo on - 触发 2FA，验证通过后 10 分钟 root 执行",
+                "sudo off - 立即关闭 sudo",
                 "sysauth plan &lt;action&gt; - 创建 2FA 审批请求",
                 "sysauth approve &lt;id&gt; &lt;code&gt; - 提交 TOTP 审批",
                 "sysauth status &lt;id&gt; - 查看审批状态",
@@ -118,9 +116,14 @@ async def handle_cancel(ctx: "Context") -> None:
 @command("/whoami", "查看当前身份与运行模式")
 async def handle_whoami(ctx: "Context") -> None:
     runtime = (ctx.config or {}).get("runtime", {})
-    mode = runtime.get("mode", "session")
+    mode = to_external_mode(runtime.get("mode", "session"))
     is_admin = ctx.auth.is_admin(ctx.user_id)
     is_system_admin = ctx.auth.is_system_admin(ctx.user_id)
+    sudo_line = None
+    if is_system_mode(runtime.get("mode", "session")):
+        status = ctx.router.get_sudo_status(ctx.user_id, ctx.message.channel, ctx.message.chat_id)
+        sudo_state = "on" if status.get("enabled") else "off"
+        sudo_line = f"- sudo: <code>{sudo_state}</code>"
     await ctx.router._reply(
         ctx.message,
         "\n".join(
@@ -131,5 +134,6 @@ async def handle_whoami(ctx: "Context") -> None:
                 f"- admin: <code>{str(bool(is_admin)).lower()}</code>",
                 f"- system_admin: <code>{str(bool(is_system_admin)).lower()}</code>",
             ]
+            + ([sudo_line] if sudo_line else [])
         ),
     )

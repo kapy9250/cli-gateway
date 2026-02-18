@@ -59,7 +59,7 @@ class MockAgent:
             return MagicMock()
         return None
     
-    async def send_message(self, session_id, message, model=None, params=None):
+    async def send_message(self, session_id, message, model=None, params=None, run_as_root=False):
         """模拟返回"""
         print(f"\n[MockAgent] Executing with:")
         print(f"  Session: {session_id}")

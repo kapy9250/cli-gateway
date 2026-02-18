@@ -25,7 +25,7 @@ async def agent_dispatcher_middleware(ctx: "Context", call_next: Callable[[], Aw
     lock = router.get_session_lock(session_id)
 
     if lock.locked():
-        await ctx.channel.send_text(message.chat_id, "⏳ 上一个请求还在处理中，请稍后再试")
+        await ctx.router._reply(message, "⏳ 上一个请求还在处理中，请稍后再试")
         return
 
     async with lock:
@@ -40,17 +40,24 @@ async def agent_dispatcher_middleware(ctx: "Context", call_next: Callable[[], Aw
         ctx.session_manager.add_history(session_id, "user", message.text or "", MAX_HISTORY_ENTRIES, persist=False)
 
         response = ""
+        run_as_root = bool(router.is_sudo_enabled(message))
         try:
             delivery = StreamingDelivery(ctx.formatter)
             response = await delivery.deliver(
                 ctx,
-                agent.send_message(session_id, prompt, model=session.model, params=session.params),
+                agent.send_message(
+                    session_id,
+                    prompt,
+                    model=session.model,
+                    params=session.params,
+                    run_as_root=run_as_root,
+                ),
                 session_id=session_id,
             )
         except Exception as e:
             logger.error("Agent error: %s", e, exc_info=True)
             response = "❌ 处理请求时出错，请稍后重试"
-            await ctx.channel.send_text(message.chat_id, response)
+            await ctx.router._reply(message, response)
 
         ctx.response = response
 

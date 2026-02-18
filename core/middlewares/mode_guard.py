@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 SYSTEM_COMMAND_PREFIXES = (
     "/sysauth",
     "/sys",
+    "/sudo",
     "/system",
     "/docker",
     "/cron",
@@ -46,9 +47,16 @@ async def mode_guard_middleware(ctx: "Context", call_next: Callable[[], Awaitabl
         await call_next()
         return
 
+    if cmd_name == "/sys" or cmd_name.startswith("/sys."):
+        await ctx.router._reply(
+            ctx.message,
+            "⚠️ /sys 指令已下线，请使用 `/sudo on` 开启 2FA 授权后直接下发自然语言任务",
+        )
+        return
+
     runtime_mode = ((ctx.config or {}).get("runtime") or {}).get("mode", "session")
-    if runtime_mode != "system":
-        await ctx.router._reply(ctx.message, "⚠️ 当前实例为 session 模式，系统级命令已禁用")
+    if str(runtime_mode).lower() not in {"system", "sys"}:
+        await ctx.router._reply(ctx.message, "⚠️ 当前实例为 user 模式，系统级命令已禁用")
         return
 
     if not ctx.auth.is_system_admin(ctx.user_id):

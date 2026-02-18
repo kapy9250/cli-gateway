@@ -10,6 +10,8 @@ import re
 from dataclasses import replace
 from typing import Awaitable, Callable, TYPE_CHECKING
 
+from utils.runtime_mode import is_system_mode
+
 if TYPE_CHECKING:
     from core.pipeline import Context
 
@@ -23,8 +25,8 @@ async def two_factor_reply_middleware(ctx: "Context", call_next: Callable[[], Aw
         await call_next()
         return
 
-    runtime_mode = str(((ctx.config or {}).get("runtime") or {}).get("mode", "session")).strip().lower()
-    if runtime_mode != "system":
+    runtime_mode = ((ctx.config or {}).get("runtime") or {}).get("mode", "session")
+    if not is_system_mode(runtime_mode):
         await call_next()
         return
 

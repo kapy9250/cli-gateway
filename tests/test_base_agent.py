@@ -11,7 +11,7 @@ class ConcreteAgent(BaseAgent):
     async def create_session(self, user_id, chat_id, session_id=None, work_dir=None, scope_dir=None):
         pass
 
-    async def send_message(self, session_id, message):
+    async def send_message(self, session_id, message, model=None, params=None, run_as_root=False):
         yield "test"
 
     async def cancel(self, session_id):

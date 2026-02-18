@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from utils.helpers import load_config
+from utils.runtime_mode import normalize_runtime_mode, to_external_mode
 from utils.runtime_version import detect_runtime_version
 
 
@@ -25,9 +26,9 @@ def parse_cli_args(argv=None):
     )
     parser.add_argument(
         "--mode",
-        choices=["session", "system"],
+        choices=["user", "sys", "session", "system"],
         default=None,
-        help="Runtime mode override",
+        help="Runtime mode override (user|sys)",
     )
     parser.add_argument(
         "--instance-id",
@@ -63,9 +64,9 @@ def seed_runtime_env(args) -> None:
         os.environ.setdefault("INSTANCE_ID", os.environ["CLI_GATEWAY_INSTANCE_ID"])
 
     if args.mode:
-        os.environ["CLI_GATEWAY_MODE"] = args.mode
+        os.environ["CLI_GATEWAY_MODE"] = normalize_runtime_mode(args.mode)
     else:
-        os.environ.setdefault("CLI_GATEWAY_MODE", "session")
+        os.environ.setdefault("CLI_GATEWAY_MODE", normalize_runtime_mode(os.environ.get("CLI_GATEWAY_MODE", "user")))
 
 
 def _namespace_path(path_value: str, instance_id: str, kind: str) -> str:
@@ -81,7 +82,7 @@ def apply_runtime_overrides(config: dict, args) -> dict:
         config = {}
 
     runtime = config.setdefault("runtime", {})
-    runtime["mode"] = args.mode or runtime.get("mode") or "session"
+    runtime["mode"] = normalize_runtime_mode(args.mode or runtime.get("mode") or "user")
     runtime["instance_id"] = str(
         args.instance_id or runtime.get("instance_id") or os.environ.get("CLI_GATEWAY_INSTANCE_ID", "default")
     )
@@ -126,7 +127,7 @@ def print_runtime_summary(config: dict, args) -> None:
     runtime = config.get("runtime", {})
     print("✅ Config validation passed")
     print(f"config: {args.config}")
-    print(f"mode: {runtime.get('mode')}")
+    print(f"mode: {to_external_mode(runtime.get('mode'))} (internal={runtime.get('mode')})")
     print(f"instance_id: {runtime.get('instance_id')}")
     print(f"version: {runtime.get('version')}")
     print(f"namespace_paths: {runtime.get('namespace_paths')}")
@@ -143,7 +144,7 @@ def print_runtime_summary(config: dict, args) -> None:
 
 def validate_system_security_requirements(runtime: dict, auth, two_factor) -> None:
     """Fail fast when system mode security prerequisites are not met."""
-    mode = str((runtime or {}).get("mode", "session")).lower()
+    mode = normalize_runtime_mode((runtime or {}).get("mode", "session"))
     if mode != "system":
         return
 
@@ -235,7 +236,7 @@ async def main(argv=None):
     runtime = config.get("runtime", {})
     logger.info(
         "Starting CLI Gateway... mode=%s instance_id=%s config=%s",
-        runtime.get("mode"),
+        to_external_mode(runtime.get("mode")),
         runtime.get("instance_id"),
         args.config,
     )
@@ -247,6 +248,7 @@ async def main(argv=None):
     from core.session import SessionManager
     from core.router import Router
     from core.two_factor import TwoFactorManager
+    from core.sudo_state import SudoStateManager
     from core.system_client import SystemServiceClient
     from core.system_executor import SystemExecutor
     from core.system_grant import SystemGrantManager
@@ -290,6 +292,10 @@ async def main(argv=None):
             approval_grace_seconds=two_factor_conf.get('approval_grace_seconds', 600),
         )
         logger.info("✅ Two-factor manager initialized (enabled=%s)", two_factor.enabled)
+        sudo_state = SudoStateManager(
+            ttl_seconds=two_factor_conf.get("approval_grace_seconds", 600),
+        )
+        logger.info("✅ Sudo state manager initialized (ttl=%ss)", sudo_state.ttl_seconds)
         validate_system_security_requirements(runtime, auth, two_factor)
 
         system_ops_conf = config.get('system_ops', {})
@@ -331,7 +337,7 @@ async def main(argv=None):
         if not isinstance(agents_cfg, dict):
             logger.error("❌ Invalid config: agents must be an object")
             sys.exit(1)
-        runtime_mode = str(runtime.get("mode", "session")).strip().lower()
+        runtime_mode = normalize_runtime_mode(runtime.get("mode", "session"))
         runtime_instance_id = str(runtime.get("instance_id", "default")).strip() or "default"
         require_remote_agent_cli_in_session = bool(system_service_conf.get("require_for_session", True))
         if runtime_mode == "session" and require_remote_agent_cli_in_session and system_client is None:
@@ -449,6 +455,7 @@ async def main(argv=None):
                 system_executor=system_executor,
                 system_client=system_client,
                 system_grant=system_grant,
+                sudo_state=sudo_state,
                 audit_logger=audit_logger,
             )
             channel.set_message_handler(router.handle_message)

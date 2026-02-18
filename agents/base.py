@@ -7,6 +7,7 @@ from typing import AsyncIterator, Optional, List, Dict, Any
 from pathlib import Path
 
 from utils.bwrap_sandbox import BwrapSandbox
+from utils.runtime_mode import normalize_runtime_mode
 
 
 @dataclass
@@ -70,7 +71,7 @@ class BaseAgent(ABC):
     ):
         self.name = name
         self.config = config
-        self.runtime_mode = str(runtime_mode or "session").strip().lower()
+        self.runtime_mode = normalize_runtime_mode(runtime_mode)
         self.instance_id = str(instance_id or "default").strip() or "default"
         self.workspace_base = workspace_base / name
         self.workspace_base.mkdir(parents=True, exist_ok=True)
@@ -188,6 +189,7 @@ class BaseAgent(ABC):
         args: List[str],
         env: Dict[str, str],
         timeout_seconds: int,
+        run_as_root: bool = False,
     ) -> Optional[Dict[str, object]]:
         """Route CLI invocation through privileged system service when configured."""
         if self.system_client is None:
@@ -204,6 +206,7 @@ class BaseAgent(ABC):
             "cwd": str(session.work_dir),
             "env": dict(env),
             "timeout_seconds": int(timeout_seconds),
+            "run_as_root": bool(run_as_root),
         }
         return await self.system_client.execute(str(session.user_id), action)
 
@@ -225,7 +228,14 @@ class BaseAgent(ABC):
         pass
     
     @abstractmethod
-    async def send_message(self, session_id: str, message: str) -> AsyncIterator[str]:
+    async def send_message(
+        self,
+        session_id: str,
+        message: str,
+        model: Optional[str] = None,
+        params: Optional[Dict[str, str]] = None,
+        run_as_root: bool = False,
+    ) -> AsyncIterator[str]:
         """
         Send message to CLI and stream output
         

@@ -119,7 +119,12 @@ class MockAgent(BaseAgent):
         return session
 
     async def send_message(
-        self, session_id: str, message: str, model: str = None, params: dict = None
+        self,
+        session_id: str,
+        message: str,
+        model: str = None,
+        params: dict = None,
+        run_as_root: bool = False,
     ) -> AsyncIterator[str]:
         self.messages_received.append((session_id, message))
         session = self.sessions.get(session_id)

@@ -124,7 +124,14 @@ class ClaudeCodeAgent(BaseAgent):
         logger.info(f"Created Claude Code session {sid} at {work_dir}")
         return session
 
-    async def send_message(self, session_id: str, message: str, model: str = None, params: dict = None) -> AsyncIterator[str]:
+    async def send_message(
+        self,
+        session_id: str,
+        message: str,
+        model: str = None,
+        params: dict = None,
+        run_as_root: bool = False,
+    ) -> AsyncIterator[str]:
         """
         Send message to Claude Code using --output-format json.
 
@@ -207,6 +214,7 @@ class ClaudeCodeAgent(BaseAgent):
                 args=args,
                 env=env,
                 timeout_seconds=int(timeout),
+                run_as_root=bool(run_as_root),
             )
             if remote_resp is not None:
                 if not remote_resp.get("ok", False):

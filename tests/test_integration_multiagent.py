@@ -47,7 +47,7 @@ class MockAgentForIntegration:
             return MagicMock()
         return None
     
-    async def send_message(self, session_id, message, model=None, params=None):
+    async def send_message(self, session_id, message, model=None, params=None, run_as_root=False):
         """模拟发送消息并返回配置信息"""
         yield f"[{self.name.upper()}] Model: {model or 'default'}\n"
         yield f"[{self.name.upper()}] Params: {params or {}}\n"

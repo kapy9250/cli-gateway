@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Awaitable, Callable, TYPE_CHECKING
 
+from utils.runtime_mode import is_system_mode
+
 if TYPE_CHECKING:
     from core.pipeline import Context
 
@@ -13,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def _is_system_mode(ctx: "Context") -> bool:
     runtime = ((ctx.config or {}).get("runtime") or {})
-    return str(runtime.get("mode", "session")).lower() == "system"
+    return is_system_mode(runtime.get("mode", "session"))
 
 
 async def _enforce_system_admin_if_needed(ctx: "Context") -> bool:

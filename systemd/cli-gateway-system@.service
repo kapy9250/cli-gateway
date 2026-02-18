@@ -21,7 +21,7 @@ EnvironmentFile=-/etc/cli-gateway/%i.env
 # Ensure instance-scoped CLI home directories exist before launch.
 ExecStartPre=/usr/bin/install -d -m 0700 /opt/cli-gateway/data/home-%i
 ExecStartPre=/usr/bin/install -d -m 0700 /opt/cli-gateway/data/home-%i/.codex /opt/cli-gateway/data/home-%i/.claude /opt/cli-gateway/data/home-%i/.gemini
-ExecStart=/usr/bin/env python3 /opt/cli-gateway/main.py --mode system --instance-id %i --config /etc/cli-gateway/%i.yaml --namespace-paths
+ExecStart=/usr/bin/env python3 /opt/cli-gateway/main.py --mode sys --instance-id %i --config /etc/cli-gateway/%i.yaml --namespace-paths
 
 Restart=always
 RestartSec=5

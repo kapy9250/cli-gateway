@@ -16,7 +16,7 @@ class SystemExecutor:
     _CRON_FIELD_RE = re.compile(r"^[A-Za-z0-9*/,\-]+$")
     _CRON_USER_RE = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
     _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-    _UNIT_ROLE_RE = re.compile(r"^cli-gateway-(session|system)@([A-Za-z0-9_.:-]+)\.service$")
+    _UNIT_ROLE_RE = re.compile(r"^cli-gateway-(session|system|user|sys)@([A-Za-z0-9_.:-]+)\.service$")
     _CRON_SPECIAL_SCHEDULES = {
         "@reboot",
         "@yearly",
@@ -196,6 +196,15 @@ class SystemExecutor:
             return str(p.resolve(strict=False))
         except Exception:
             return str(p.absolute())
+
+    @staticmethod
+    def _canonical_mode_name(raw: str) -> str:
+        value = str(raw or "").strip().lower()
+        if value in {"session", "user"}:
+            return "session"
+        if value in {"system", "sys"}:
+            return "system"
+        return value
 
     @classmethod
     def _path_matches_prefixes(cls, path: str, prefixes: List[str]) -> bool:
@@ -561,7 +570,7 @@ class SystemExecutor:
         for unit in sorted(peer_units):
             m = cls._UNIT_ROLE_RE.fullmatch(str(unit).strip())
             if m:
-                return m.group(1).lower(), m.group(2)
+                return cls._canonical_mode_name(m.group(1)), m.group(2)
         return None
 
     @staticmethod
@@ -691,8 +700,18 @@ class SystemExecutor:
         bwrap_cmd.extend(["--chdir", sandbox_workspace, "--", *exec_argv])
         return bwrap_cmd
 
-    def _build_agent_exec_argv(self, *, command: str, args: List[str]) -> Tuple[Optional[List[str]], Optional[str]]:
+    def _build_agent_exec_argv(
+        self,
+        *,
+        command: str,
+        args: List[str],
+        run_as_root: bool = False,
+    ) -> Tuple[Optional[List[str]], Optional[str]]:
         exec_argv = [command, *args]
+        # Explicit sudo/root path: keep root identity, do not drop privileges.
+        if os.geteuid() == 0 and bool(run_as_root):
+            return exec_argv, None
+
         run_uid = self.agent_cli_run_uid
         run_gid = self.agent_cli_run_gid
         should_drop_uid = run_uid is not None and int(run_uid) != os.geteuid()
@@ -724,7 +743,7 @@ class SystemExecutor:
         if not self.agent_cli_enabled:
             return None, "agent_cli_disabled"
 
-        request_mode = str(action.get("mode", "")).strip().lower()
+        request_mode = self._canonical_mode_name(action.get("mode", ""))
         if request_mode and request_mode != expected_mode:
             return None, "mode_mismatch"
 
@@ -774,6 +793,9 @@ class SystemExecutor:
         timeout_seconds = max(1, min(timeout_seconds, self.agent_cli_max_timeout_seconds))
 
         env = self._sanitize_agent_env(action.get("env"), instance_id=expected_instance_id)
+        run_as_root = bool(action.get("run_as_root", False))
+        if run_as_root and expected_mode != "system":
+            return None, "root_exec_forbidden_in_mode"
         return {
             "agent": agent,
             "command": command,
@@ -783,6 +805,7 @@ class SystemExecutor:
             "env": env,
             "mode": expected_mode,
             "instance_id": expected_instance_id,
+            "run_as_root": run_as_root,
         }, None
 
     def agent_cli_exec(
@@ -814,23 +837,38 @@ class SystemExecutor:
         cwd = Path(str(normalized["cwd"]))
         timeout_seconds = int(normalized["timeout_seconds"])
         env = dict(normalized["env"])
+        run_as_root = bool(normalized.get("run_as_root", False))
         try:
             home_dir = Path(env.get("HOME", "")).resolve(strict=False)
             if str(home_dir):
-                self._ensure_owned_dir(home_dir, self.agent_cli_run_uid, self.agent_cli_run_gid)
+                self._ensure_owned_dir(
+                    home_dir,
+                    None if run_as_root else self.agent_cli_run_uid,
+                    None if run_as_root else self.agent_cli_run_gid,
+                )
             codex_home = Path(env.get("CODEX_HOME", "")).resolve(strict=False)
             if str(codex_home):
-                self._ensure_owned_dir(codex_home, self.agent_cli_run_uid, self.agent_cli_run_gid)
+                self._ensure_owned_dir(
+                    codex_home,
+                    None if run_as_root else self.agent_cli_run_uid,
+                    None if run_as_root else self.agent_cli_run_gid,
+                )
         except Exception as e:
             return {"ok": False, "reason": f"agent_cli_home_setup_failed:{e}"}
 
-        exec_argv, exec_error = self._build_agent_exec_argv(command=command, args=args)
+        exec_argv, exec_error = self._build_agent_exec_argv(
+            command=command,
+            args=args,
+            run_as_root=run_as_root,
+        )
         if exec_error:
             return {"ok": False, "reason": exec_error}
         assert exec_argv is not None
 
         run_cmd = exec_argv
-        if self.agent_cli_bwrap_enabled:
+        if run_as_root:
+            run_cmd = exec_argv
+        elif self.agent_cli_bwrap_enabled:
             run_cmd = self._build_agent_bwrap_command(
                 exec_argv=exec_argv,
                 cwd=cwd,
@@ -884,4 +922,5 @@ class SystemExecutor:
             "mode": caller_mode,
             "instance_id": caller_instance_id,
             "peer_uid": peer_uid,
+            "run_as_root": run_as_root,
         }

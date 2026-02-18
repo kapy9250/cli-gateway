@@ -37,6 +37,7 @@ class Context:
     channel: BaseChannel
     billing: Optional[BillingTracker]
     two_factor: Optional[object]
+    sudo_state: Optional[object]
     system_executor: Optional[object]
     system_client: Optional[object]
     system_grant: Optional[object]

@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from core.command_registry import command
+from utils.runtime_mode import to_external_mode
 
 if TYPE_CHECKING:
     from core.pipeline import Context
@@ -40,12 +41,21 @@ async def handle_current(ctx: "Context") -> None:
     scope_id = ctx.router.get_scope_id(ctx.message)
     current = ctx.session_manager.get_active_session_for_scope(scope_id)
     version = _runtime_version(ctx)
+    mode = to_external_mode(((ctx.config or {}).get("runtime") or {}).get("mode", "session"))
     if not current:
-        await ctx.router._reply(ctx.message, f"当前无活跃会话\n版本: <code>{version}</code>")
+        await ctx.router._reply(
+            ctx.message,
+            f"当前无活跃会话\nAgent: -\n模式: <code>{mode}</code>\n版本: <code>{version}</code>",
+        )
         return
     await ctx.router._reply(
         ctx.message,
-        f"当前会话: {current.session_id}\nAgent: {current.agent_name}\n版本: <code>{version}</code>",
+        (
+            f"当前会话: {current.session_id}\n"
+            f"Agent: {current.agent_name}\n"
+            f"模式: <code>{mode}</code>\n"
+            f"版本: <code>{version}</code>"
+        ),
     )
 
 

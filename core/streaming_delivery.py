@@ -91,14 +91,20 @@ class StreamingDelivery:
                 if now - last_update >= STREAM_UPDATE_INTERVAL:
                     if message_id is None:
                         message_id = await ctx.channel.send_text(
-                            ctx.message.chat_id, buffer or "⏳ 处理中..."
+                            ctx.message.chat_id,
+                            ctx.router.format_outbound_text(ctx.message, buffer or "⏳ 处理中..."),
                         )
                     else:
-                        await ctx.channel.edit_message(ctx.message.chat_id, message_id, buffer)
+                        await ctx.channel.edit_message(
+                            ctx.message.chat_id,
+                            message_id,
+                            ctx.router.format_outbound_text(ctx.message, buffer),
+                        )
                     last_update = now
 
         response = self.formatter.clean(buffer) or "✅ 完成"
-        parts = self.formatter.split_message(response)
+        response_with_state = ctx.router.format_outbound_text(ctx.message, response)
+        parts = self.formatter.split_message(response_with_state)
 
         if message_id is None:
             await ctx.channel.send_text(ctx.message.chat_id, parts[0])
@@ -135,7 +141,8 @@ class StreamingDelivery:
                 buffer += chunk
 
         response = self.formatter.clean(buffer) or "✅ 完成"
-        for part in self.formatter.split_message(response):
+        response_with_state = ctx.router.format_outbound_text(ctx.message, response)
+        for part in self.formatter.split_message(response_with_state):
             await ctx.channel.send_text(ctx.message.chat_id, part)
 
         return response

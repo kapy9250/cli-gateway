@@ -83,3 +83,19 @@ def test_validate_system_security_requirements_allows_bootstrap_without_preseede
     auth = SimpleNamespace(system_admin_users={"123", "456"})
     two_factor = SimpleNamespace(enabled=True, secrets_by_user={"123": "ABC"})
     validate_system_security_requirements(runtime, auth, two_factor)
+
+
+def test_apply_runtime_overrides_normalizes_user_sys_aliases():
+    cfg = {"runtime": {"mode": "user"}}
+    out = apply_runtime_overrides(
+        cfg,
+        SimpleNamespace(mode="sys", instance_id="inst-a", health_port=None, namespace_paths=False),
+    )
+    assert out["runtime"]["mode"] == "system"
+
+
+def test_validate_system_security_requirements_accepts_sys_alias():
+    runtime = {"mode": "sys"}
+    auth = SimpleNamespace(system_admin_users={"123"})
+    two_factor = SimpleNamespace(enabled=True, secrets_by_user={"123": "ABC"})
+    validate_system_security_requirements(runtime, auth, two_factor)

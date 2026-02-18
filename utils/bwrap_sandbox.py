@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from utils.runtime_mode import normalize_runtime_mode
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_RO_PATHS = [
@@ -86,7 +88,7 @@ class BwrapSandbox:
     """Build and validate bubblewrap command wrappers."""
 
     def __init__(self, runtime_mode: str, sandbox_config: Optional[dict] = None):
-        self.runtime_mode = str(runtime_mode or "session").strip().lower()
+        self.runtime_mode = normalize_runtime_mode(runtime_mode)
         cfg = sandbox_config if isinstance(sandbox_config, dict) else {}
         bcfg = cfg.get("bwrap")
         bcfg = bcfg if isinstance(bcfg, dict) else {}
