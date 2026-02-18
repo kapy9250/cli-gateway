@@ -328,6 +328,7 @@ async def main(argv=None):
             logger.error("❌ Invalid config: agents must be an object")
             sys.exit(1)
         runtime_mode = str(runtime.get("mode", "session")).strip().lower()
+        runtime_instance_id = str(runtime.get("instance_id", "default")).strip() or "default"
         sandbox_cfg = config.get("sandbox", {})
         if not isinstance(sandbox_cfg, dict):
             sandbox_cfg = {}
@@ -348,7 +349,9 @@ async def main(argv=None):
                 config=claude_cfg,
                 workspace_base=workspace_base,
                 runtime_mode=runtime_mode,
+                instance_id=runtime_instance_id,
                 sandbox_config=sandbox_cfg,
+                system_client=system_client,
             )
             logger.info("✅ Claude Code agent initialized")
         
@@ -360,7 +363,9 @@ async def main(argv=None):
                 config=codex_cfg,
                 workspace_base=workspace_base,
                 runtime_mode=runtime_mode,
+                instance_id=runtime_instance_id,
                 sandbox_config=sandbox_cfg,
+                system_client=system_client,
             )
             logger.info("✅ Codex agent initialized")
         
@@ -372,7 +377,9 @@ async def main(argv=None):
                 config=gemini_cfg,
                 workspace_base=workspace_base,
                 runtime_mode=runtime_mode,
+                instance_id=runtime_instance_id,
                 sandbox_config=sandbox_cfg,
+                system_client=system_client,
             )
             logger.info("✅ Gemini agent initialized")
         

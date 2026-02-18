@@ -5,13 +5,18 @@ from __future__ import annotations
 import re
 import subprocess
 import time
+import os
+import pwd
+import shutil
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 
 class SystemExecutor:
     _CRON_FIELD_RE = re.compile(r"^[A-Za-z0-9*/,\-]+$")
     _CRON_USER_RE = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
+    _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    _UNIT_ROLE_RE = re.compile(r"^cli-gateway-(session|system)@([A-Za-z0-9_.:-]+)\.service$")
     _CRON_SPECIAL_SCHEDULES = {
         "@reboot",
         "@yearly",
@@ -72,6 +77,92 @@ class SystemExecutor:
                 ],
             )
         ]
+        agent_cli_cfg = cfg.get("agent_cli")
+        agent_cli_cfg = agent_cli_cfg if isinstance(agent_cli_cfg, dict) else {}
+        self.agent_cli_enabled = bool(agent_cli_cfg.get("enabled", True))
+        self.agent_cli_max_output_bytes = max(4096, int(agent_cli_cfg.get("max_output_bytes", 512000)))
+        self.agent_cli_max_timeout_seconds = max(1, int(agent_cli_cfg.get("max_timeout_seconds", 300)))
+        self.agent_cli_max_args = max(1, int(agent_cli_cfg.get("max_args", 256)))
+        self.agent_cli_allowed_agents = {
+            str(v).strip().lower()
+            for v in agent_cli_cfg.get("allowed_agents", ["claude", "codex", "gemini"])
+            if str(v).strip()
+        }
+        self.agent_cli_allowed_commands = {
+            str(v).strip()
+            for v in agent_cli_cfg.get("allowed_commands", ["claude", "codex", "gemini", "gemini-cli"])
+            if str(v).strip()
+        }
+        self.agent_cli_allowed_env_keys = {
+            str(v).strip()
+            for v in agent_cli_cfg.get("allowed_env_keys", [])
+            if str(v).strip()
+        }
+        self.agent_cli_workspace_parent = self._normalize_path(
+            str(agent_cli_cfg.get("workspace_parent", "./workspaces"))
+        )
+        self.agent_cli_home_parent = self._normalize_path(
+            str(agent_cli_cfg.get("home_parent", "./data"))
+        )
+        self.agent_cli_path = str(
+            agent_cli_cfg.get(
+                "path",
+                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            )
+        )
+
+        bwrap_cfg = agent_cli_cfg.get("bwrap")
+        bwrap_cfg = bwrap_cfg if isinstance(bwrap_cfg, dict) else {}
+        self.agent_cli_bwrap_enabled = bool(bwrap_cfg.get("enabled", True))
+        self.agent_cli_bwrap_required = bool(bwrap_cfg.get("required", True))
+        self.agent_cli_bwrap_command = str(bwrap_cfg.get("command", "bwrap")).strip() or "bwrap"
+        self.agent_cli_bwrap_unshare_all = bool(bwrap_cfg.get("unshare_all", True))
+        self.agent_cli_bwrap_share_network = bool(bwrap_cfg.get("share_network", True))
+        self.agent_cli_bwrap_readonly_paths = [
+            str(v)
+            for v in bwrap_cfg.get(
+                "readonly_paths",
+                [
+                    "/usr",
+                    "/bin",
+                    "/sbin",
+                    "/lib",
+                    "/lib64",
+                    "/etc",
+                    "/run",
+                    "/opt",
+                    "/data",
+                    "/var",
+                ],
+            )
+        ]
+        self.agent_cli_bwrap_mask_dirs = [
+            str(v)
+            for v in bwrap_cfg.get(
+                "mask_dirs",
+                [
+                    "/root",
+                    "/home",
+                    "/etc/cron.d",
+                    "/etc/cron.daily",
+                    "/etc/cron.hourly",
+                    "/etc/cron.monthly",
+                    "/etc/cron.weekly",
+                    "/var/spool/cron",
+                    "/var/spool/cron/crontabs",
+                ],
+            )
+        ]
+        self.agent_cli_bwrap_mask_files = [str(v) for v in bwrap_cfg.get("mask_files", ["/etc/crontab"])]
+
+        run_as_user = str(agent_cli_cfg.get("run_as_user", "cli-gateway")).strip() or "cli-gateway"
+        run_as_uid = agent_cli_cfg.get("run_as_uid")
+        run_as_gid = agent_cli_cfg.get("run_as_gid")
+        self.agent_cli_run_uid, self.agent_cli_run_gid = self._resolve_run_identity(
+            run_as_user,
+            run_as_uid,
+            run_as_gid,
+        )
 
     @staticmethod
     def _normalize_path(path: str) -> str:
@@ -405,4 +496,317 @@ class SystemExecutor:
             "unit": unit,
             "lines": line_count,
             "output": out,
+        }
+
+    @staticmethod
+    def _resolve_run_identity(
+        run_as_user: str,
+        run_as_uid: Optional[int],
+        run_as_gid: Optional[int],
+    ) -> Tuple[Optional[int], Optional[int]]:
+        uid = None if run_as_uid is None else int(run_as_uid)
+        gid = None if run_as_gid is None else int(run_as_gid)
+        if uid is not None and gid is not None:
+            return uid, gid
+
+        try:
+            pw = pwd.getpwnam(run_as_user)
+            resolved_uid = int(pw.pw_uid)
+            resolved_gid = int(pw.pw_gid)
+            if gid is None:
+                gid = resolved_gid
+            if uid is None:
+                uid = resolved_uid
+            return uid, gid
+        except Exception:
+            pass
+
+        if uid is None:
+            uid = os.getuid()
+        if gid is None:
+            gid = os.getgid()
+        return uid, gid
+
+    @classmethod
+    def _derive_gateway_identity(cls, peer_units: Set[str]) -> Optional[Tuple[str, str]]:
+        for unit in sorted(peer_units):
+            m = cls._UNIT_ROLE_RE.fullmatch(str(unit).strip())
+            if m:
+                return m.group(1).lower(), m.group(2)
+        return None
+
+    @staticmethod
+    def _is_under(root: Path, path: Path) -> bool:
+        try:
+            normalized_root = root.resolve(strict=False)
+            normalized_path = path.resolve(strict=False)
+        except Exception:
+            return False
+        if normalized_path == normalized_root:
+            return True
+        return str(normalized_path).startswith(str(normalized_root).rstrip("/") + "/")
+
+    @staticmethod
+    def _truncate_text(value: str, max_bytes: int) -> Tuple[str, bool]:
+        raw = (value or "").encode("utf-8", errors="replace")
+        if len(raw) <= max_bytes:
+            return value or "", False
+        cut = raw[:max_bytes]
+        return cut.decode("utf-8", errors="replace"), True
+
+    @staticmethod
+    def _ensure_owned_dir(path: Path, uid: Optional[int], gid: Optional[int]) -> None:
+        path.mkdir(parents=True, exist_ok=True)
+        if uid is not None or gid is not None:
+            try:
+                os.chown(path, uid if uid is not None else -1, gid if gid is not None else -1)
+            except PermissionError:
+                pass
+        os.chmod(path, 0o700)
+
+    def _sanitize_agent_env(self, request_env: dict, *, instance_id: str) -> Dict[str, str]:
+        env: Dict[str, str] = {"PATH": self.agent_cli_path, "TMPDIR": "/tmp"}
+
+        home_dir = Path(self.agent_cli_home_parent) / f"home-{instance_id}"
+        codex_home = home_dir / ".codex"
+        env["HOME"] = str(home_dir.resolve(strict=False))
+        env["CODEX_HOME"] = str(codex_home.resolve(strict=False))
+
+        if not isinstance(request_env, dict):
+            return env
+
+        reserved_keys = {"PATH", "TMPDIR", "HOME", "CODEX_HOME"}
+        for raw_key, raw_value in request_env.items():
+            key = str(raw_key).strip()
+            if not key or key in reserved_keys:
+                continue
+            if not self._ENV_KEY_RE.fullmatch(key):
+                continue
+            if key.startswith(("LD_", "PYTHON")):
+                continue
+            if self.agent_cli_allowed_env_keys and key not in self.agent_cli_allowed_env_keys:
+                continue
+            env[key] = str(raw_value)
+        return env
+
+    def _build_agent_bwrap_command(
+        self,
+        *,
+        command: str,
+        args: List[str],
+        cwd: Path,
+        env: Dict[str, str],
+    ) -> List[str]:
+        bwrap_cmd = [self.agent_cli_bwrap_command, "--die-with-parent", "--new-session"]
+        if self.agent_cli_bwrap_unshare_all:
+            bwrap_cmd.append("--unshare-all")
+        if self.agent_cli_bwrap_share_network:
+            bwrap_cmd.append("--share-net")
+        if self.agent_cli_run_uid is not None:
+            bwrap_cmd.extend(["--uid", str(self.agent_cli_run_uid)])
+        if self.agent_cli_run_gid is not None:
+            bwrap_cmd.extend(["--gid", str(self.agent_cli_run_gid)])
+
+        for path in self.agent_cli_bwrap_readonly_paths:
+            p = str(path).strip()
+            if p:
+                bwrap_cmd.extend(["--ro-bind-try", p, p])
+
+        bwrap_cmd.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
+
+        writable_paths: List[Path] = [cwd.resolve(strict=False)]
+        for key in ("HOME", "CODEX_HOME"):
+            value = env.get(key)
+            if value:
+                writable_paths.append(Path(value).resolve(strict=False))
+
+        deduped: List[Path] = []
+        seen = set()
+        for p in writable_paths:
+            key = str(p)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(p)
+        for path in deduped:
+            bwrap_cmd.extend(["--bind", str(path), str(path)])
+
+        for path in self.agent_cli_bwrap_mask_dirs:
+            p = str(path).strip()
+            if p:
+                bwrap_cmd.extend(["--tmpfs", p])
+        for path in self.agent_cli_bwrap_mask_files:
+            p = str(path).strip()
+            if p:
+                bwrap_cmd.extend(["--ro-bind-try", "/dev/null", p])
+
+        bwrap_cmd.extend(["--chdir", str(cwd), "--", command, *args])
+        return bwrap_cmd
+
+    def _normalize_agent_exec_request(
+        self,
+        action: dict,
+        *,
+        expected_mode: str,
+        expected_instance_id: str,
+    ) -> Tuple[Optional[Dict[str, object]], Optional[str]]:
+        if not isinstance(action, dict):
+            return None, "action_not_object"
+        if not self.agent_cli_enabled:
+            return None, "agent_cli_disabled"
+
+        request_mode = str(action.get("mode", "")).strip().lower()
+        if request_mode and request_mode != expected_mode:
+            return None, "mode_mismatch"
+
+        request_instance_id = str(action.get("instance_id", "")).strip()
+        if request_instance_id and request_instance_id != expected_instance_id:
+            return None, "instance_id_mismatch"
+
+        agent = str(action.get("agent", "")).strip().lower()
+        if not agent:
+            return None, "agent_required"
+        if self.agent_cli_allowed_agents and agent not in self.agent_cli_allowed_agents:
+            return None, "agent_not_allowed"
+
+        command = str(action.get("command", "")).strip()
+        if not command:
+            return None, "command_required"
+        if "/" in command:
+            return None, "command_must_be_basename"
+        if self.agent_cli_allowed_commands and command not in self.agent_cli_allowed_commands:
+            return None, "command_not_allowed"
+        if shutil.which(command) is None:
+            return None, "command_not_found"
+
+        raw_args = action.get("args")
+        if not isinstance(raw_args, list):
+            return None, "args_not_list"
+        if len(raw_args) > self.agent_cli_max_args:
+            return None, "args_too_many"
+        args = [str(v) for v in raw_args]
+        if any(self._contains_line_break_or_nul(a) for a in args):
+            return None, "args_invalid"
+
+        cwd_raw = str(action.get("cwd", "")).strip()
+        if not cwd_raw:
+            return None, "cwd_required"
+        cwd = Path(self._normalize_path(cwd_raw))
+        workspace_root = Path(self.agent_cli_workspace_parent) / expected_instance_id
+        if not self._is_under(workspace_root, cwd):
+            return None, "cwd_not_in_workspace"
+
+        timeout_seconds = action.get("timeout_seconds", self.agent_cli_max_timeout_seconds)
+        try:
+            timeout_seconds = int(timeout_seconds)
+        except Exception:
+            timeout_seconds = self.agent_cli_max_timeout_seconds
+        timeout_seconds = max(1, min(timeout_seconds, self.agent_cli_max_timeout_seconds))
+
+        env = self._sanitize_agent_env(action.get("env"), instance_id=expected_instance_id)
+        return {
+            "agent": agent,
+            "command": command,
+            "args": args,
+            "cwd": cwd.resolve(strict=False),
+            "timeout_seconds": timeout_seconds,
+            "env": env,
+            "mode": expected_mode,
+            "instance_id": expected_instance_id,
+        }, None
+
+    def agent_cli_exec(
+        self,
+        action: dict,
+        *,
+        peer_uid: Optional[int] = None,
+        peer_units: Optional[Set[str]] = None,
+    ) -> Dict[str, object]:
+        if not self.enabled:
+            return {"ok": False, "reason": "system_executor_disabled"}
+
+        identity = self._derive_gateway_identity(set(peer_units or set()))
+        if identity is None:
+            return {"ok": False, "reason": "caller_identity_unknown"}
+        caller_mode, caller_instance_id = identity
+
+        normalized, error = self._normalize_agent_exec_request(
+            action,
+            expected_mode=caller_mode,
+            expected_instance_id=caller_instance_id,
+        )
+        if error:
+            return {"ok": False, "reason": error}
+        assert normalized is not None
+
+        command = str(normalized["command"])
+        args = list(normalized["args"])
+        cwd = Path(str(normalized["cwd"]))
+        timeout_seconds = int(normalized["timeout_seconds"])
+        env = dict(normalized["env"])
+        try:
+            home_dir = Path(env.get("HOME", "")).resolve(strict=False)
+            if str(home_dir):
+                self._ensure_owned_dir(home_dir, self.agent_cli_run_uid, self.agent_cli_run_gid)
+            codex_home = Path(env.get("CODEX_HOME", "")).resolve(strict=False)
+            if str(codex_home):
+                self._ensure_owned_dir(codex_home, self.agent_cli_run_uid, self.agent_cli_run_gid)
+        except Exception as e:
+            return {"ok": False, "reason": f"agent_cli_home_setup_failed:{e}"}
+
+        run_cmd = [command, *args]
+        if self.agent_cli_bwrap_enabled:
+            run_cmd = self._build_agent_bwrap_command(
+                command=command,
+                args=args,
+                cwd=cwd,
+                env=env,
+            )
+        elif self.agent_cli_bwrap_required:
+            return {"ok": False, "reason": "bwrap_required_but_disabled"}
+
+        try:
+            completed = subprocess.run(
+                run_cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                env=env,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            stdout_text = (e.stdout or "").decode("utf-8", errors="replace") if isinstance(e.stdout, bytes) else str(e.stdout or "")
+            stderr_text = (e.stderr or "").decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
+            stdout_text, out_truncated = self._truncate_text(stdout_text, self.agent_cli_max_output_bytes)
+            stderr_text, err_truncated = self._truncate_text(stderr_text, self.agent_cli_max_output_bytes)
+            return {
+                "ok": False,
+                "reason": "agent_cli_timeout",
+                "timed_out": True,
+                "timeout_seconds": timeout_seconds,
+                "stdout": stdout_text,
+                "stderr": stderr_text,
+                "stdout_truncated": out_truncated,
+                "stderr_truncated": err_truncated,
+            }
+        except FileNotFoundError as e:
+            return {"ok": False, "reason": f"agent_cli_exec_error:{e}"}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "reason": f"agent_cli_exec_error:{e}"}
+
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        stdout, out_truncated = self._truncate_text(stdout, self.agent_cli_max_output_bytes)
+        stderr, err_truncated = self._truncate_text(stderr, self.agent_cli_max_output_bytes)
+        return {
+            "ok": completed.returncode == 0,
+            "returncode": int(completed.returncode),
+            "timed_out": False,
+            "stdout": stdout,
+            "stderr": stderr,
+            "stdout_truncated": out_truncated,
+            "stderr_truncated": err_truncated,
+            "mode": caller_mode,
+            "instance_id": caller_instance_id,
+            "peer_uid": peer_uid,
         }

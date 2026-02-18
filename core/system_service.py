@@ -25,6 +25,7 @@ class SystemServiceServer:
         max_request_bytes: int = 131072,
         require_grant_ops: Optional[Set[str]] = None,
         require_grant_for_all_ops: bool = False,
+        no_grant_ops: Optional[Set[str]] = None,
         allowed_peer_uids: Optional[Set[int]] = None,
         allowed_peer_units: Optional[Set[str]] = None,
         enforce_peer_unit_allowlist: bool = False,
@@ -51,6 +52,7 @@ class SystemServiceServer:
             }
         )
         self.require_grant_for_all_ops = bool(require_grant_for_all_ops)
+        self.no_grant_ops = set(no_grant_ops or {"agent_cli_exec"})
         self.allowed_peer_uids = set(int(v) for v in (allowed_peer_uids or set()))
         self.allowed_peer_units = {
             str(v).strip() for v in (allowed_peer_units or set()) if str(v).strip()
@@ -145,7 +147,13 @@ class SystemServiceServer:
                 await self._reply(writer, {"ok": False, "reason": f"request_decode_failed:{e}"})
                 return
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, self._process_request, req)
+            result = await loop.run_in_executor(
+                None,
+                self._process_request,
+                req,
+                peer_uid,
+                peer_units,
+            )
             await self._reply(writer, result)
         except Exception as e:
             try:
@@ -295,9 +303,11 @@ class SystemServiceServer:
             pass
 
     def _requires_grant(self, action: dict) -> bool:
+        op = str((action or {}).get("op", "")).strip().lower()
+        if op in self.no_grant_ops:
+            return False
         if self.require_grant_for_all_ops:
             return True
-        op = str((action or {}).get("op", "")).strip().lower()
         if op in self.require_grant_ops:
             return True
         if op == "read_file":
@@ -328,7 +338,12 @@ class SystemServiceServer:
             return {"ok": False, "reason": f"grant_invalid:{reason}"}
         return None
 
-    def _process_request(self, req) -> Dict[str, object]:
+    def _process_request(
+        self,
+        req,
+        peer_uid: Optional[int] = None,
+        peer_units: Optional[Set[str]] = None,
+    ) -> Dict[str, object]:
         if not isinstance(req, dict):
             return {"ok": False, "reason": "request_not_object"}
         action = req.get("action")
@@ -341,12 +356,18 @@ class SystemServiceServer:
         if grant_err:
             return grant_err
 
-        result = self._execute_action(action)
+        result = self._execute_action(action, peer_uid=peer_uid, peer_units=peer_units or set())
         if not isinstance(result, dict):
             return {"ok": False, "reason": "executor_result_not_object"}
         return result
 
-    def _execute_action(self, action: dict) -> Dict[str, object]:
+    def _execute_action(
+        self,
+        action: dict,
+        *,
+        peer_uid: Optional[int] = None,
+        peer_units: Optional[Set[str]] = None,
+    ) -> Dict[str, object]:
         op = str(action.get("op", "")).strip().lower()
 
         if op == "journal":
@@ -396,5 +417,11 @@ class SystemServiceServer:
             return self.executor.restore_file(
                 str(action.get("path", "")),
                 str(action.get("backup_path", "")),
+            )
+        if op == "agent_cli_exec":
+            return self.executor.agent_cli_exec(
+                action,
+                peer_uid=peer_uid,
+                peer_units=set(peer_units or set()),
             )
         return {"ok": False, "reason": "op_not_supported"}

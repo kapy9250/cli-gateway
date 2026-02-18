@@ -65,6 +65,29 @@ class StreamingCliAgent(BaseAgent):
             env.update(self.config.get('env', {}))
             timeout = self.config.get('timeout', 300)
 
+            remote_resp = await self._remote_execute_cli(
+                session=session,
+                command=command,
+                args=args,
+                env=env,
+                timeout_seconds=int(timeout),
+            )
+            if remote_resp is not None:
+                if not remote_resp.get("ok", False):
+                    reason = str(remote_resp.get("reason", "remote_exec_failed"))
+                    yield f"❌ 远程执行失败: {reason}"
+                    stderr = str(remote_resp.get("stderr", "") or "").strip()
+                    if stderr:
+                        yield f"\nError: {stderr}"
+                    return
+                stdout = str(remote_resp.get("stdout", "") or "")
+                stderr = str(remote_resp.get("stderr", "") or "")
+                if stdout:
+                    yield stdout
+                if stderr:
+                    logger.warning(f"{self.agent_label} stderr: {stderr}")
+                return
+
             command, args, env = self._wrap_command(
                 command,
                 args,

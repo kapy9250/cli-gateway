@@ -8,6 +8,16 @@ import pytest
 from agents.codex_cli import CodexAgent
 
 
+class FakeRemoteClient:
+    def __init__(self, response: dict):
+        self.response = dict(response)
+        self.calls = []
+
+    async def execute(self, user_id: str, action: dict, grant_token: str = None):
+        self.calls.append({"user_id": str(user_id), "action": dict(action or {})})
+        return dict(self.response)
+
+
 @pytest.fixture
 def codex_config():
     return {
@@ -89,6 +99,33 @@ class TestSendMessage:
 
         args = mock_exec.call_args.args
         assert "--skip-git-repo-check" in args
+
+    @pytest.mark.asyncio
+    async def test_send_message_uses_remote_system_client_when_configured(self, tmp_path, codex_config):
+        remote = FakeRemoteClient({"ok": True, "returncode": 0, "stdout": "remote-ok", "stderr": ""})
+        agent = CodexAgent(
+            "codex",
+            codex_config,
+            tmp_path,
+            runtime_mode="session",
+            instance_id="user-main",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            chunks = []
+            async for chunk in agent.send_message(session.session_id, "test"):
+                chunks.append(chunk)
+
+        assert "remote-ok" in "".join(chunks)
+        assert not mock_exec.called
+        assert len(remote.calls) == 1
+        action = remote.calls[0]["action"]
+        assert action["op"] == "agent_cli_exec"
+        assert action["agent"] == "codex"
+        assert action["mode"] == "session"
+        assert action["instance_id"] == "user-main"
 
     @pytest.mark.asyncio
     async def test_send_message_command_not_found(self, agent):

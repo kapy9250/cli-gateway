@@ -37,6 +37,19 @@ class FakeExecutor:
     def docker_exec(self, args):
         return {"ok": True, "returncode": 0, "output": "docker-ok", "truncated": False, "cmd": ["docker"] + list(args)}
 
+    def agent_cli_exec(self, action, peer_uid=None, peer_units=None):
+        return {
+            "ok": True,
+            "returncode": 0,
+            "timed_out": False,
+            "stdout": "agent-ok",
+            "stderr": "",
+            "mode": "session",
+            "instance_id": "user-main",
+            "peer_uid": peer_uid,
+            "peer_units": sorted(peer_units or set()),
+        }
+
 
 class BlockingExecutor(FakeExecutor):
     def docker_exec(self, args):
@@ -292,5 +305,36 @@ async def test_require_grant_for_all_ops_blocks_journal_without_grant(tmp_path):
         allowed = await client.execute("u1", action, grant_token=token)
         assert allowed.get("ok") is True
         assert allowed.get("lines") == 5
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_agent_cli_exec_is_exempt_from_grant_by_default(tmp_path):
+    socket_path = _short_socket_path(tmp_path)
+    grants = SystemGrantManager(secret="bridge-secret", ttl_seconds=60)
+    server = SystemServiceServer(
+        socket_path=str(socket_path),
+        executor=FakeExecutor(),
+        grant_manager=grants,
+        require_grant_for_all_ops=True,
+    )
+    await server.start()
+    try:
+        client = SystemServiceClient(str(socket_path), timeout_seconds=2.0)
+        action = {
+            "op": "agent_cli_exec",
+            "agent": "codex",
+            "mode": "session",
+            "instance_id": "user-main",
+            "command": "codex",
+            "args": ["exec", "hello"],
+            "cwd": "/tmp",
+            "env": {},
+            "timeout_seconds": 30,
+        }
+        allowed = await client.execute("u1", action)
+        assert allowed.get("ok") is True
+        assert allowed.get("stdout") == "agent-ok"
     finally:
         await server.stop()

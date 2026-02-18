@@ -63,15 +63,20 @@ class BaseAgent(ABC):
         config: dict,
         workspace_base: Path,
         runtime_mode: str = "session",
+        instance_id: str = "default",
         sandbox_config: Optional[dict] = None,
+        system_client: Optional[object] = None,
     ):
         self.name = name
         self.config = config
+        self.runtime_mode = str(runtime_mode or "session").strip().lower()
+        self.instance_id = str(instance_id or "default").strip() or "default"
         self.workspace_base = workspace_base / name
         self.workspace_base.mkdir(parents=True, exist_ok=True)
         self.sessions: Dict[str, SessionInfo] = {}
         self._last_usage: Dict[str, UsageInfo] = {}
         self._processes: Dict[str, Any] = {}  # session_id -> running subprocess
+        self.system_client = system_client
         self.command_sandbox = BwrapSandbox(runtime_mode=runtime_mode, sandbox_config=sandbox_config)
     
     @staticmethod
@@ -172,6 +177,31 @@ class BaseAgent(ABC):
     ) -> tuple[str, List[str], Dict[str, str]]:
         """Apply runtime command sandbox (bwrap) when configured/enabled."""
         return self.command_sandbox.wrap(command, args, work_dir=work_dir, env=env)
+
+    async def _remote_execute_cli(
+        self,
+        *,
+        session: SessionInfo,
+        command: str,
+        args: List[str],
+        env: Dict[str, str],
+        timeout_seconds: int,
+    ) -> Optional[Dict[str, object]]:
+        """Route CLI invocation through privileged system service when configured."""
+        if self.system_client is None:
+            return None
+        action = {
+            "op": "agent_cli_exec",
+            "agent": self.name,
+            "mode": self.runtime_mode,
+            "instance_id": self.instance_id,
+            "command": str(command),
+            "args": [str(v) for v in args],
+            "cwd": str(session.work_dir),
+            "env": dict(env),
+            "timeout_seconds": int(timeout_seconds),
+        }
+        return await self.system_client.execute(str(session.user_id), action)
 
     @abstractmethod
     async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:

@@ -30,14 +30,18 @@ class ClaudeCodeAgent(BaseAgent):
         config: dict,
         workspace_base: Path,
         runtime_mode: str = "session",
+        instance_id: str = "default",
         sandbox_config: Optional[dict] = None,
+        system_client: Optional[object] = None,
     ):
         super().__init__(
             name=name,
             config=config,
             workspace_base=workspace_base,
             runtime_mode=runtime_mode,
+            instance_id=instance_id,
             sandbox_config=sandbox_config,
+            system_client=system_client,
         )
         # Track running subprocesses per session for cleanup
         self._processes: Dict[str, asyncio.subprocess.Process] = {}
@@ -180,103 +184,130 @@ class ClaudeCodeAgent(BaseAgent):
             # Timeout
             timeout = self.config.get('timeout', 300)
 
-            command, args, env = self._wrap_command(
-                command,
-                args,
-                work_dir=session.work_dir,
+            remote_resp = await self._remote_execute_cli(
+                session=session,
+                command=command,
+                args=args,
                 env=env,
+                timeout_seconds=int(timeout),
             )
-            logger.info(f"Executing: {command} {' '.join(args)}")
-
-            # Execute
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    command,
-                    *args,
-                    cwd=str(session.work_dir),
-                    env=env,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-
-                # Track subprocess for cleanup
-                self._processes[session_id] = process
-
-                # Read all stdout (JSON mode outputs a single JSON blob)
-                try:
-                    stdout_data, stderr_data = await asyncio.wait_for(
-                        process.communicate(),
-                        timeout=timeout,
-                    )
-                except asyncio.TimeoutError:
-                    await self._terminate_subprocess(process)
-                    logger.error(f"Claude Code timeout after {timeout}s")
-                    yield f"⚠️ 操作超时（{timeout}秒），结果可能不完整"
+            if remote_resp is not None:
+                if not remote_resp.get("ok", False):
+                    reason = str(remote_resp.get("reason", "remote_exec_failed"))
+                    yield f"❌ 远程执行失败: {reason}"
+                    stderr = str(remote_resp.get("stderr", "") or "").strip()
+                    if stderr:
+                        yield f"\nError: {stderr}"
                     return
 
-                raw = stdout_data.decode('utf-8', errors='replace').strip()
-                error = stderr_data.decode('utf-8', errors='replace').strip()
-
+                raw = str(remote_resp.get("stdout", "") or "").strip()
+                error = str(remote_resp.get("stderr", "") or "").strip()
                 if error:
                     logger.warning(f"Claude Code stderr: {error}")
-
-                if process.returncode != 0:
-                    # Try to parse error from JSON, fallback to raw
-                    yield f"❌ Exit code: {process.returncode}"
-                    if raw:
-                        try:
-                            data = json.loads(raw)
-                            yield f"\n{data.get('result', raw)}"
-                        except json.JSONDecodeError:
-                            yield f"\n{raw}"
+                if not raw:
                     if error:
-                        yield f"\nError: {error}"
+                        yield error
                     return
-
-                # Parse JSON response
-                try:
-                    data = json.loads(raw)
-                except json.JSONDecodeError:
-                    # Fallback: treat as plain text
-                    logger.warning("Failed to parse Claude JSON output, yielding raw")
-                    yield raw
-                    return
-
-                # Extract result text
-                result_text = data.get('result', '')
-                if result_text:
-                    yield result_text
-
-                # Mark session as initialized (subsequent calls use --resume)
-                self._initialized_sessions.add(session_id)
-
-                # Extract usage info for billing
-                usage = data.get('usage', {})
-                model_usage = data.get('modelUsage', {})
-                # Determine actual model used
-                actual_model = resolved_model
-                if model_usage:
-                    actual_model = next(iter(model_usage.keys()), resolved_model)
-
-                self._last_usage[session_id] = UsageInfo(
-                    input_tokens=usage.get('input_tokens', 0),
-                    output_tokens=usage.get('output_tokens', 0),
-                    cache_read_tokens=usage.get('cache_read_input_tokens', 0),
-                    cache_creation_tokens=usage.get('cache_creation_input_tokens', 0),
-                    cost_usd=data.get('total_cost_usd', 0.0),
-                    model=actual_model,
-                    duration_ms=data.get('duration_ms', 0),
+            else:
+                command, args, env = self._wrap_command(
+                    command,
+                    args,
+                    work_dir=session.work_dir,
+                    env=env,
                 )
+                logger.info(f"Executing: {command} {' '.join(args)}")
 
-            except FileNotFoundError:
-                error_msg = f"❌ Claude Code CLI 未安装或未找到命令: {command}"
-                logger.error(error_msg)
-                yield error_msg
+                # Execute
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        command,
+                        *args,
+                        cwd=str(session.work_dir),
+                        env=env,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
 
-            except Exception as e:
-                error_msg = f"❌ 执行错误: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                yield error_msg
+                    # Track subprocess for cleanup
+                    self._processes[session_id] = process
+
+                    # Read all stdout (JSON mode outputs a single JSON blob)
+                    try:
+                        stdout_data, stderr_data = await asyncio.wait_for(
+                            process.communicate(),
+                            timeout=timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        await self._terminate_subprocess(process)
+                        logger.error(f"Claude Code timeout after {timeout}s")
+                        yield f"⚠️ 操作超时（{timeout}秒），结果可能不完整"
+                        return
+
+                    raw = stdout_data.decode('utf-8', errors='replace').strip()
+                    error = stderr_data.decode('utf-8', errors='replace').strip()
+
+                    if error:
+                        logger.warning(f"Claude Code stderr: {error}")
+
+                    if process.returncode != 0:
+                        # Try to parse error from JSON, fallback to raw
+                        yield f"❌ Exit code: {process.returncode}"
+                        if raw:
+                            try:
+                                data = json.loads(raw)
+                                yield f"\n{data.get('result', raw)}"
+                            except json.JSONDecodeError:
+                                yield f"\n{raw}"
+                        if error:
+                            yield f"\nError: {error}"
+                        return
+
+                except FileNotFoundError:
+                    error_msg = f"❌ Claude Code CLI 未安装或未找到命令: {command}"
+                    logger.error(error_msg)
+                    yield error_msg
+                    return
+
+                except Exception as e:
+                    error_msg = f"❌ 执行错误: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
+                    yield error_msg
+                    return
+
+            # Parse JSON response
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                # Fallback: treat as plain text
+                logger.warning("Failed to parse Claude JSON output, yielding raw")
+                yield raw
+                return
+
+            # Extract result text
+            result_text = data.get('result', '')
+            if result_text:
+                yield result_text
+
+            # Mark session as initialized (subsequent calls use --resume)
+            self._initialized_sessions.add(session_id)
+
+            # Extract usage info for billing
+            usage = data.get('usage', {})
+            model_usage = data.get('modelUsage', {})
+            # Determine actual model used
+            actual_model = resolved_model
+            if model_usage:
+                actual_model = next(iter(model_usage.keys()), resolved_model)
+
+            self._last_usage[session_id] = UsageInfo(
+                input_tokens=usage.get('input_tokens', 0),
+                output_tokens=usage.get('output_tokens', 0),
+                cache_read_tokens=usage.get('cache_read_input_tokens', 0),
+                cache_creation_tokens=usage.get('cache_creation_input_tokens', 0),
+                cost_usd=data.get('total_cost_usd', 0.0),
+                model=actual_model,
+                duration_ms=data.get('duration_ms', 0),
+            )
 
         finally:
             # Always clean up subprocess (handles premature generator close)

@@ -59,6 +59,7 @@ def build_server(config: dict, args) -> SystemServiceServer:
     executor = SystemExecutor(config.get("system_ops", {}))
     require_grant_ops = set(str(v) for v in system_cfg.get("require_grant_ops", [])) or None
     require_grant_for_all_ops = bool(system_cfg.get("require_grant_for_all_ops", False))
+    no_grant_ops = set(str(v).strip() for v in system_cfg.get("no_grant_ops", [])) or None
     allowed_peer_uids = set(int(v) for v in system_cfg.get("allowed_peer_uids", [])) or None
     allowed_peer_units = set(str(v).strip() for v in system_cfg.get("allowed_peer_units", []) if str(v).strip()) or None
     enforce_peer_uid_allowlist = bool(system_cfg.get("enforce_peer_uid_allowlist", True))
@@ -79,6 +80,7 @@ def build_server(config: dict, args) -> SystemServiceServer:
         max_request_bytes=int(system_cfg.get("max_request_bytes", 131072)),
         require_grant_ops=require_grant_ops,
         require_grant_for_all_ops=require_grant_for_all_ops,
+        no_grant_ops=no_grant_ops,
         allowed_peer_uids=allowed_peer_uids,
         allowed_peer_units=allowed_peer_units,
         enforce_peer_unit_allowlist=enforce_peer_unit_allowlist,
@@ -104,6 +106,7 @@ async def main(argv=None):
         print(f"max_request_bytes: {server.max_request_bytes}")
         print(f"require_grant_for_all_ops: {server.require_grant_for_all_ops}")
         print(f"require_grant_ops: {sorted(server.require_grant_ops)}")
+        print(f"no_grant_ops: {sorted(server.no_grant_ops)}")
         print(f"allowed_peer_uids: {sorted(server.allowed_peer_uids)}")
         print(f"enforce_peer_unit_allowlist: {server.enforce_peer_unit_allowlist}")
         print(f"allowed_peer_units: {sorted(server.allowed_peer_units)}")

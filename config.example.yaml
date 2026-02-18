@@ -83,6 +83,25 @@ system_ops:
     - "/data"
     - "/var"
     - "/usr/local/etc"
+  # Unified AI CLI execution via sys-executor.
+  # session/system gateway both send model CLI calls here.
+  # For session callers, cwd must stay under workspace_parent/<instance_id>.
+  agent_cli:
+    enabled: true
+    run_as_user: "cli-gateway"
+    workspace_parent: "./workspaces"
+    home_parent: "./data"
+    max_output_bytes: 512000
+    max_timeout_seconds: 300
+    max_args: 256
+    allowed_agents: ["claude", "codex", "gemini"]
+    allowed_commands: ["claude", "codex", "gemini", "gemini-cli"]
+    bwrap:
+      enabled: true
+      required: true
+      command: "bwrap"
+      unshare_all: true
+      share_network: true
 
 # ──────────── Privileged System Service Bridge ────────────
 # enabled=true 时，/sys 命令改为通过本地 Unix Socket 调用 root 侧 system_service_main.py。
@@ -111,6 +130,10 @@ system_service:
   max_request_bytes: 131072
   # Security default: require grant token for every system action.
   require_grant_for_all_ops: true
+  # Ops exempted from 2FA grant verification.
+  # Keep this list minimal: agent CLI exec is permissioned by peer-unit + sandbox policy.
+  no_grant_ops:
+    - "agent_cli_exec"
   require_grant_ops:
     - "cron_upsert"
     - "cron_delete"

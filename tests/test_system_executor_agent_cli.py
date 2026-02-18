@@ -1,0 +1,108 @@
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+from core.system_executor import SystemExecutor
+
+
+def _base_config(tmp_path: Path) -> dict:
+    return {
+        "enabled": True,
+        "agent_cli": {
+            "enabled": True,
+            "run_as_uid": 1000,
+            "run_as_gid": 1000,
+            "workspace_parent": str(tmp_path / "workspaces"),
+            "home_parent": str(tmp_path / "data"),
+            "allowed_agents": ["codex"],
+            "allowed_commands": ["codex"],
+            "bwrap": {"enabled": False, "required": False},
+        },
+    }
+
+
+def test_agent_cli_exec_accepts_session_caller_and_runs_command(tmp_path: Path):
+    cfg = _base_config(tmp_path)
+    executor = SystemExecutor(cfg)
+    cwd = tmp_path / "workspaces" / "user-main" / "codex" / "sess_1"
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    action = {
+        "op": "agent_cli_exec",
+        "agent": "codex",
+        "mode": "session",
+        "instance_id": "user-main",
+        "command": "codex",
+        "args": ["exec", "hello"],
+        "cwd": str(cwd),
+        "env": {},
+        "timeout_seconds": 30,
+    }
+    completed = Mock(returncode=0, stdout="ok", stderr="")
+
+    with patch("shutil.which", return_value="/usr/bin/codex"), patch(
+        "subprocess.run", return_value=completed
+    ) as run_mock:
+        result = executor.agent_cli_exec(
+            action,
+            peer_uid=999,
+            peer_units={"cli-gateway-session@user-main.service"},
+        )
+
+    assert result["ok"] is True
+    assert result["stdout"] == "ok"
+    run_args = run_mock.call_args[0][0]
+    assert run_args[:2] == ["codex", "exec"]
+
+
+def test_agent_cli_exec_rejects_mode_mismatch(tmp_path: Path):
+    cfg = _base_config(tmp_path)
+    executor = SystemExecutor(cfg)
+    cwd = tmp_path / "workspaces" / "user-main" / "codex" / "sess_1"
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    action = {
+        "op": "agent_cli_exec",
+        "agent": "codex",
+        "mode": "system",
+        "instance_id": "user-main",
+        "command": "codex",
+        "args": ["exec", "hello"],
+        "cwd": str(cwd),
+        "env": {},
+        "timeout_seconds": 30,
+    }
+    with patch("shutil.which", return_value="/usr/bin/codex"):
+        result = executor.agent_cli_exec(
+            action,
+            peer_uid=999,
+            peer_units={"cli-gateway-session@user-main.service"},
+        )
+    assert result["ok"] is False
+    assert result["reason"] == "mode_mismatch"
+
+
+def test_agent_cli_exec_rejects_cwd_outside_instance_workspace(tmp_path: Path):
+    cfg = _base_config(tmp_path)
+    executor = SystemExecutor(cfg)
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True, exist_ok=True)
+
+    action = {
+        "op": "agent_cli_exec",
+        "agent": "codex",
+        "mode": "session",
+        "instance_id": "user-main",
+        "command": "codex",
+        "args": ["exec", "hello"],
+        "cwd": str(outside),
+        "env": {},
+        "timeout_seconds": 30,
+    }
+    with patch("shutil.which", return_value="/usr/bin/codex"):
+        result = executor.agent_cli_exec(
+            action,
+            peer_uid=999,
+            peer_units={"cli-gateway-session@user-main.service"},
+        )
+    assert result["ok"] is False
+    assert result["reason"] == "cwd_not_in_workspace"
