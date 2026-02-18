@@ -58,11 +58,18 @@ def build_server(config: dict, args) -> SystemServiceServer:
     )
     executor = SystemExecutor(config.get("system_ops", {}))
     require_grant_ops = set(str(v) for v in system_cfg.get("require_grant_ops", [])) or None
+    require_grant_for_all_ops = bool(system_cfg.get("require_grant_for_all_ops", False))
     allowed_peer_uids = set(int(v) for v in system_cfg.get("allowed_peer_uids", [])) or None
+    allowed_peer_units = set(str(v).strip() for v in system_cfg.get("allowed_peer_units", []) if str(v).strip()) or None
     enforce_peer_uid_allowlist = bool(system_cfg.get("enforce_peer_uid_allowlist", True))
     if enforce_peer_uid_allowlist and not allowed_peer_uids:
         raise ValueError(
             "system_service.allowed_peer_uids must be configured when enforce_peer_uid_allowlist=true"
+        )
+    enforce_peer_unit_allowlist = bool(system_cfg.get("enforce_peer_unit_allowlist", False))
+    if enforce_peer_unit_allowlist and not allowed_peer_units:
+        raise ValueError(
+            "system_service.allowed_peer_units must be configured when enforce_peer_unit_allowlist=true"
         )
     return SystemServiceServer(
         socket_path=socket_path,
@@ -71,7 +78,10 @@ def build_server(config: dict, args) -> SystemServiceServer:
         request_timeout_seconds=float(system_cfg.get("request_timeout_seconds", 15.0)),
         max_request_bytes=int(system_cfg.get("max_request_bytes", 131072)),
         require_grant_ops=require_grant_ops,
+        require_grant_for_all_ops=require_grant_for_all_ops,
         allowed_peer_uids=allowed_peer_uids,
+        allowed_peer_units=allowed_peer_units,
+        enforce_peer_unit_allowlist=enforce_peer_unit_allowlist,
         socket_mode=system_cfg.get("socket_mode"),
         socket_parent_mode=system_cfg.get("socket_parent_mode", "0700"),
         socket_uid=system_cfg.get("socket_uid"),
@@ -92,8 +102,11 @@ async def main(argv=None):
         print(f"socket: {server.socket_path}")
         print(f"request_timeout_seconds: {server.request_timeout_seconds}")
         print(f"max_request_bytes: {server.max_request_bytes}")
+        print(f"require_grant_for_all_ops: {server.require_grant_for_all_ops}")
         print(f"require_grant_ops: {sorted(server.require_grant_ops)}")
         print(f"allowed_peer_uids: {sorted(server.allowed_peer_uids)}")
+        print(f"enforce_peer_unit_allowlist: {server.enforce_peer_unit_allowlist}")
+        print(f"allowed_peer_units: {sorted(server.allowed_peer_units)}")
         print(f"socket_mode: {oct(server.socket_mode) if server.socket_mode is not None else None}")
         print(f"socket_parent_mode: {oct(server.socket_parent_mode)}")
         print(f"socket_uid: {server.socket_uid}")

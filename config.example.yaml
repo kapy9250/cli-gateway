@@ -87,8 +87,15 @@ system_service:
   # Optional: only allow requests from these local UNIX peer UIDs.
   # For example, set to the uid of the non-root gateway process.
   allowed_peer_uids: []
+  # Security default: require explicit systemd unit allowlist.
+  enforce_peer_unit_allowlist: true
+  # Restrict callers to expected gateway system unit(s).
+  # Replace <id> with your instance id, e.g. cli-gateway-system@ops-a.service
+  allowed_peer_units: []
   request_timeout_seconds: 15
   max_request_bytes: 131072
+  # Security default: require grant token for every system action.
+  require_grant_for_all_ops: true
   require_grant_ops:
     - "cron_upsert"
     - "cron_delete"

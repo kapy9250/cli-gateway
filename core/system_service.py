@@ -9,7 +9,7 @@ import socket
 import stat
 import struct
 from pathlib import Path
-from typing import Dict, Optional, Set, Union
+from typing import Dict, Optional, Set, Tuple, Union
 
 
 class SystemServiceServer:
@@ -24,7 +24,10 @@ class SystemServiceServer:
         request_timeout_seconds: float = 15.0,
         max_request_bytes: int = 131072,
         require_grant_ops: Optional[Set[str]] = None,
+        require_grant_for_all_ops: bool = False,
         allowed_peer_uids: Optional[Set[int]] = None,
+        allowed_peer_units: Optional[Set[str]] = None,
+        enforce_peer_unit_allowlist: bool = False,
         socket_mode: Optional[Union[int, str]] = None,
         socket_parent_mode: Optional[Union[int, str]] = "0700",
         socket_uid: Optional[int] = None,
@@ -47,7 +50,12 @@ class SystemServiceServer:
                 "config_rollback",
             }
         )
+        self.require_grant_for_all_ops = bool(require_grant_for_all_ops)
         self.allowed_peer_uids = set(int(v) for v in (allowed_peer_uids or set()))
+        self.allowed_peer_units = {
+            str(v).strip() for v in (allowed_peer_units or set()) if str(v).strip()
+        }
+        self.enforce_peer_unit_allowlist = bool(enforce_peer_unit_allowlist)
         self.socket_mode = self._normalize_mode(socket_mode)
         normalized_parent_mode = self._normalize_mode(socket_parent_mode)
         self.socket_parent_mode = 0o700 if normalized_parent_mode is None else normalized_parent_mode
@@ -104,11 +112,24 @@ class SystemServiceServer:
 
         self._connections.add(writer)
         try:
-            peer_uid = self._extract_peer_uid(writer)
+            peer_pid, peer_uid, _peer_gid = self._extract_peer_credentials(writer)
             if not self._is_peer_uid_allowed(peer_uid):
                 await self._reply(
                     writer,
-                    {"ok": False, "reason": "peer_uid_not_allowed", "peer_uid": peer_uid},
+                    {"ok": False, "reason": "peer_uid_not_allowed", "peer_uid": peer_uid, "peer_pid": peer_pid},
+                )
+                return
+            peer_units = self._extract_peer_systemd_units(peer_pid)
+            if not self._is_peer_unit_allowed(peer_units):
+                await self._reply(
+                    writer,
+                    {
+                        "ok": False,
+                        "reason": "peer_unit_not_allowed",
+                        "peer_uid": peer_uid,
+                        "peer_pid": peer_pid,
+                        "peer_units": sorted(peer_units),
+                    },
                 )
                 return
             raw = await asyncio.wait_for(reader.readline(), timeout=self.request_timeout_seconds)
@@ -146,23 +167,32 @@ class SystemServiceServer:
             return False
         return int(peer_uid) in self.allowed_peer_uids
 
+    def _is_peer_unit_allowed(self, peer_units: Set[str]) -> bool:
+        if not self.enforce_peer_unit_allowlist:
+            return True
+        if not self.allowed_peer_units:
+            return False
+        if not peer_units:
+            return False
+        return bool(self.allowed_peer_units.intersection(peer_units))
+
     @staticmethod
-    def _extract_peer_uid(writer: asyncio.StreamWriter) -> Optional[int]:
+    def _extract_peer_credentials(writer: asyncio.StreamWriter) -> Tuple[Optional[int], Optional[int], Optional[int]]:
         """Best-effort peer UID extraction for Unix domain sockets.
 
         Linux uses SO_PEERCRED; BSD/macOS may expose getpeereid.
         """
         sock = writer.get_extra_info("socket")
         if sock is None:
-            return None
+            return None, None, None
 
         # Linux: ucred(pid, uid, gid)
         if hasattr(socket, "SO_PEERCRED"):
             try:
                 size = struct.calcsize("3i")
                 raw = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
-                _pid, uid, _gid = struct.unpack("3i", raw)
-                return int(uid)
+                pid, uid, gid = struct.unpack("3i", raw)
+                return int(pid), int(uid), int(gid)
             except Exception:
                 pass
 
@@ -171,10 +201,34 @@ class SystemServiceServer:
             getpeereid = getattr(sock, "getpeereid", None)
             if callable(getpeereid):
                 uid, _gid = getpeereid()
-                return int(uid)
+                return None, int(uid), int(_gid)
         except Exception:
             pass
-        return None
+        return None, None, None
+
+    @staticmethod
+    def _extract_peer_systemd_units(peer_pid: Optional[int]) -> Set[str]:
+        if peer_pid is None or peer_pid <= 0:
+            return set()
+        cgroup_path = Path(f"/proc/{peer_pid}/cgroup")
+        try:
+            text = cgroup_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return set()
+
+        units: Set[str] = set()
+        for line in text.splitlines():
+            parts = line.split(":", 2)
+            if len(parts) != 3:
+                continue
+            cg_path = parts[2].strip()
+            if not cg_path:
+                continue
+            for segment in cg_path.split("/"):
+                seg = segment.strip()
+                if seg.endswith(".service"):
+                    units.add(seg)
+        return units
 
     async def _reply(self, writer: asyncio.StreamWriter, payload: Dict[str, object]) -> None:
         wire = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
@@ -241,6 +295,8 @@ class SystemServiceServer:
             pass
 
     def _requires_grant(self, action: dict) -> bool:
+        if self.require_grant_for_all_ops:
+            return True
         op = str((action or {}).get("op", "")).strip().lower()
         if op in self.require_grant_ops:
             return True

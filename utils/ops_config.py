@@ -129,6 +129,20 @@ def merge_ops_config(
                 normalized_secrets[uid] = generate_totp_secret()
                 generated_secret_users.append(uid)
 
+    system_service = cfg.get("system_service")
+    if not isinstance(system_service, dict):
+        system_service = {}
+        cfg["system_service"] = system_service
+    system_service.setdefault("enforce_peer_uid_allowlist", True)
+    allowed_peer_uids = system_service.get("allowed_peer_uids")
+    if not isinstance(allowed_peer_uids, list):
+        system_service["allowed_peer_uids"] = []
+    system_service.setdefault("enforce_peer_unit_allowlist", True)
+    allowed_peer_units = system_service.get("allowed_peer_units")
+    if not isinstance(allowed_peer_units, list) or not any(str(v).strip() for v in allowed_peer_units):
+        system_service["allowed_peer_units"] = [f"cli-gateway-system@{instance_id}.service"]
+    system_service.setdefault("require_grant_for_all_ops", True)
+
     channel_enabled = {}
     channels = cfg.get("channels")
     if channel_profile == "telegram-only" and isinstance(channels, dict):

@@ -221,6 +221,42 @@ def test_peer_uid_policy_disabled_allows_unknown_uid():
     assert server._is_peer_uid_allowed(None) is True
 
 
+def test_peer_unit_allowlist_policy_logic():
+    server = SystemServiceServer(
+        socket_path="/tmp/unused.sock",
+        executor=FakeExecutor(),
+        allowed_peer_units={"cli-gateway-system@ops-a.service"},
+        enforce_peer_unit_allowlist=True,
+    )
+    assert server._is_peer_unit_allowed({"cli-gateway-system@ops-a.service"}) is True
+    assert server._is_peer_unit_allowed({"other.service"}) is False
+    assert server._is_peer_unit_allowed(set()) is False
+
+
+def test_peer_unit_policy_disabled_allows_unknown_unit():
+    server = SystemServiceServer(
+        socket_path="/tmp/unused.sock",
+        executor=FakeExecutor(),
+        allowed_peer_units={"cli-gateway-system@ops-a.service"},
+        enforce_peer_unit_allowlist=False,
+    )
+    assert server._is_peer_unit_allowed(set()) is True
+
+
+def test_extract_peer_systemd_units_from_cgroup(monkeypatch):
+    pid = 4242
+    expected = "0::/system.slice/system-cli\\x2dgateway\\x2dsystem.slice/cli-gateway-system@ops-a.service\n"
+
+    def _fake_read_text(self, *args, **kwargs):
+        if str(self) == f"/proc/{pid}/cgroup":
+            return expected
+        raise FileNotFoundError(str(self))
+
+    monkeypatch.setattr(Path, "read_text", _fake_read_text)
+    units = SystemServiceServer._extract_peer_systemd_units(pid)
+    assert "cli-gateway-system@ops-a.service" in units
+
+
 def test_socket_mode_is_applied(tmp_path):
     socket_path = tmp_path / "mode.sock"
     socket_path.touch()
@@ -232,3 +268,29 @@ def test_socket_mode_is_applied(tmp_path):
     server._apply_socket_permissions()
     mode = stat.S_IMODE(os.stat(socket_path).st_mode)
     assert mode == 0o640
+
+
+@pytest.mark.asyncio
+async def test_require_grant_for_all_ops_blocks_journal_without_grant(tmp_path):
+    socket_path = _short_socket_path(tmp_path)
+    grants = SystemGrantManager(secret="bridge-secret", ttl_seconds=60)
+    server = SystemServiceServer(
+        socket_path=str(socket_path),
+        executor=FakeExecutor(),
+        grant_manager=grants,
+        require_grant_for_all_ops=True,
+    )
+    await server.start()
+    try:
+        client = SystemServiceClient(str(socket_path), timeout_seconds=2.0)
+        denied = await client.execute("u1", {"op": "journal", "lines": 5})
+        assert denied.get("ok") is False
+        assert denied.get("reason") == "grant_required"
+
+        action = {"op": "journal", "lines": 5}
+        token = grants.issue("u1", action)
+        allowed = await client.execute("u1", action, grant_token=token)
+        assert allowed.get("ok") is True
+        assert allowed.get("lines") == 5
+    finally:
+        await server.stop()

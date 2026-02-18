@@ -30,7 +30,11 @@ def _base_config():
 def test_merge_applies_runtime_health_and_privileged_overlay():
     base = _base_config()
     privileged = {
-        "system_service": {"enabled": True, "socket_path": "/run/cli-gateway/ops-a.sock"},
+        "system_service": {
+            "enabled": True,
+            "socket_path": "/run/cli-gateway/ops-a.sock",
+            "allowed_peer_uids": [999],
+        },
         "system_ops": {"enabled": True, "max_read_bytes": 1024},
     }
 
@@ -47,6 +51,9 @@ def test_merge_applies_runtime_health_and_privileged_overlay():
     assert out["health"]["host"] == "127.0.0.1"
     assert out["health"]["port"] == 18810
     assert out["system_service"]["socket_path"] == "/run/cli-gateway/ops-a.sock"
+    assert out["system_service"]["enforce_peer_unit_allowlist"] is True
+    assert out["system_service"]["allowed_peer_units"] == ["cli-gateway-system@ops-a.service"]
+    assert out["system_service"]["require_grant_for_all_ops"] is True
     assert out["system_ops"]["max_read_bytes"] == 1024
 
 
@@ -134,3 +141,16 @@ def test_merge_prefers_privileged_auth_and_two_factor():
     assert out["auth"]["system_admin_users"] == ["2002"]
     assert out["two_factor"]["secrets"]["2002"] == "KEEPSECRETABC2345"
     assert meta["generated_secret_users"] == []
+
+
+def test_merge_keeps_existing_allowed_peer_units():
+    base = _base_config()
+    privileged = {
+        "system_service": {
+            "enabled": True,
+            "allowed_peer_units": ["cli-gateway-system@ops-z.service"],
+        }
+    }
+    out, _meta = merge_ops_config(base, privileged, instance_id="ops-a")
+    assert out["system_service"]["allowed_peer_units"] == ["cli-gateway-system@ops-z.service"]
+    assert out["system_service"]["enforce_peer_unit_allowlist"] is True

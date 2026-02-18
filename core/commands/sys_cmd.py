@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
@@ -22,9 +21,9 @@ def _usage() -> str:
     return "\n".join(
         [
             "用法:",
-            "• /sys journal [unit] [lines]",
+            "• /sys journal [unit] [lines] [--challenge <id>]",
             "• /sys read <path> [--max-bytes N] [--challenge <id>]",
-            "• /sys cron list",
+            "• /sys cron list [--challenge <id>]",
             "• /sys cron upsert <name> \"<schedule>\" \"<command>\" [--challenge <id>]",
             "• /sys cron delete <name> [--challenge <id>]",
             "• /sys docker <docker args...> [--challenge <id>]",
@@ -121,9 +120,6 @@ async def _require_approval(
 
     grant = getattr(ctx, "system_grant", None)
     if grant is None:
-        # Local executor mode does not require signed grants.
-        if getattr(ctx, "system_client", None) is None:
-            return ""
         await ctx.router._reply(ctx.message, "❌ system grant signer 不可用")
         return None
 
@@ -134,72 +130,11 @@ async def _require_approval(
         return None
 
 
-def _execute_local(executor, action_payload: dict) -> dict:
-    op = str(action_payload.get("op", "")).lower()
-    if op == "journal":
-        return executor.read_journal(
-            unit=action_payload.get("unit"),
-            lines=action_payload.get("lines", 100),
-            since=action_payload.get("since"),
-        )
-    if op == "read_file":
-        return executor.read_file(
-            path=str(action_payload.get("path", "")),
-            max_bytes=action_payload.get("max_bytes"),
-        )
-    if op == "cron_list":
-        return executor.cron_list()
-    if op == "cron_upsert":
-        return executor.cron_upsert(
-            name=str(action_payload.get("name", "")),
-            schedule=str(action_payload.get("schedule", "")),
-            command=str(action_payload.get("command", "")),
-            user=str(action_payload.get("user", "root")),
-        )
-    if op == "cron_delete":
-        return executor.cron_delete(name=str(action_payload.get("name", "")))
-    if op == "docker_exec":
-        args = action_payload.get("args") or []
-        if not isinstance(args, list):
-            return {"ok": False, "reason": "docker_args_not_list"}
-        return executor.docker_exec([str(a) for a in args])
-    if op == "config_write":
-        return executor.write_file(
-            path=str(action_payload.get("path", "")),
-            content=str(action_payload.get("content", "")),
-            append=False,
-            create_backup=True,
-        )
-    if op == "config_append":
-        return executor.write_file(
-            path=str(action_payload.get("path", "")),
-            content=str(action_payload.get("content", "")),
-            append=True,
-            create_backup=True,
-        )
-    if op == "config_delete":
-        return executor.delete_file(str(action_payload.get("path", "")))
-    if op == "config_rollback":
-        return executor.restore_file(
-            path=str(action_payload.get("path", "")),
-            backup_path=str(action_payload.get("backup_path", "")),
-        )
-    return {"ok": False, "reason": "op_not_supported"}
-
-
 async def _execute_action(ctx: "Context", action_payload: dict, grant_token: Optional[str] = None) -> dict:
     client = getattr(ctx, "system_client", None)
-    if client is not None:
-        return await client.execute(ctx.user_id, action_payload, grant_token=grant_token)
-
-    executor = ctx.system_executor
-    if executor is None:
-        return {"ok": False, "reason": "system_executor_unavailable"}
-    loop = asyncio.get_running_loop()
-    try:
-        return await loop.run_in_executor(None, _execute_local, executor, action_payload)
-    except Exception as e:
-        return {"ok": False, "reason": f"system_executor_exec_error:{e}"}
+    if client is None:
+        return {"ok": False, "reason": "system_client_unavailable"}
+    return await client.execute(ctx.user_id, action_payload, grant_token=grant_token)
 
 
 def _audit(ctx: "Context", action: str, payload: dict, result: dict) -> None:
@@ -220,10 +155,9 @@ def _audit(ctx: "Context", action: str, payload: dict, result: dict) -> None:
 
 @command("/sys", "系统运维命令（system 模式）")
 async def handle_sys(ctx: "Context") -> None:
-    local_executor = ctx.system_executor
     remote_client = getattr(ctx, "system_client", None)
-    if local_executor is None and remote_client is None:
-        await ctx.router._reply(ctx.message, "❌ system backend 不可用")
+    if remote_client is None:
+        await ctx.router._reply(ctx.message, "❌ system backend 不可用（remote bridge 未配置）")
         return
 
     text = (ctx.message.text or "").strip()
@@ -255,7 +189,22 @@ async def handle_sys(ctx: "Context") -> None:
             lines = int(normalized[3])
 
         action_payload = {"op": "journal", "unit": unit, "lines": lines}
-        result = await _execute_action(ctx, action_payload)
+        retry_parts = ["/sys", "journal"]
+        if unit:
+            retry_parts.append(shlex.quote(unit))
+        retry_parts.append(str(lines))
+        retry_cmd = " ".join(retry_parts)
+        grant_token = await _require_approval(ctx, action_payload, challenge_id, retry_cmd)
+        if grant_token is None:
+            _audit(
+                ctx,
+                "journal_pending_or_failed",
+                {"unit": unit, "lines": lines, "challenge_id": challenge_id},
+                {"ok": False, "reason": "2fa_required_or_failed"},
+            )
+            return
+
+        result = await _execute_action(ctx, action_payload, grant_token=grant_token)
         _audit(ctx, "journal", {"unit": unit, "lines": lines}, result)
         if not result.get("ok"):
             await ctx.router._reply(ctx.message, f"❌ journal 读取失败: <code>{result.get('reason')}</code>")
@@ -298,20 +247,16 @@ async def handle_sys(ctx: "Context") -> None:
                 return
 
         action_payload = {"op": "read_file", "path": path, "max_bytes": max_bytes}
-        is_sensitive = bool(local_executor and local_executor.is_sensitive_path(path))
-        if is_sensitive:
-            retry_cmd = f"/sys read {path} --max-bytes {max_bytes}"
-            grant_token = await _require_approval(ctx, action_payload, challenge_id, retry_cmd)
-            if grant_token is None:
-                _audit(
-                    ctx,
-                    "read_sensitive_pending_or_failed",
-                    {"path": path, "max_bytes": max_bytes, "challenge_id": challenge_id},
-                    {"ok": False, "reason": "2fa_required_or_failed"},
-                )
-                return
-        else:
-            grant_token = None
+        retry_cmd = f"/sys read {path} --max-bytes {max_bytes}"
+        grant_token = await _require_approval(ctx, action_payload, challenge_id, retry_cmd)
+        if grant_token is None:
+            _audit(
+                ctx,
+                "read_pending_or_failed",
+                {"path": path, "max_bytes": max_bytes, "challenge_id": challenge_id},
+                {"ok": False, "reason": "2fa_required_or_failed"},
+            )
+            return
 
         result = await _execute_action(ctx, action_payload, grant_token=grant_token)
         _audit(ctx, "read_file", {"path": path, "max_bytes": max_bytes}, result)
@@ -342,7 +287,18 @@ async def handle_sys(ctx: "Context") -> None:
         op = normalized[2].lower()
         if op == "list":
             action_payload = {"op": "cron_list"}
-            result = await _execute_action(ctx, action_payload)
+            retry_cmd = "/sys cron list"
+            grant_token = await _require_approval(ctx, action_payload, challenge_id, retry_cmd)
+            if grant_token is None:
+                _audit(
+                    ctx,
+                    "cron_list_pending_or_failed",
+                    {"challenge_id": challenge_id},
+                    {"ok": False, "reason": "2fa_required_or_failed"},
+                )
+                return
+
+            result = await _execute_action(ctx, action_payload, grant_token=grant_token)
             _audit(ctx, "cron_list", {}, result)
             if not result.get("ok"):
                 await ctx.router._reply(ctx.message, f"❌ cron 列表失败: <code>{result.get('reason')}</code>")

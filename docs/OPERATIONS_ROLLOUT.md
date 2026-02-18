@@ -101,7 +101,7 @@ In system instance chat:
 - `kapy sys read /etc/shadow --challenge <id>`
 
 Expected:
-- sensitive read requires 2FA
+- read operations require 2FA challenge
 - approved challenge can be consumed once
 
 ## 8) Write/Ops Flow
@@ -112,7 +112,7 @@ In system instance chat:
 - `kapy sys config write /etc/myapp.conf <base64_content>`
 
 Expected:
-- write/docker operations require challenge
+- all `/sys` operations require challenge
 - after approval operations execute and return result
 
 ## 9) Audit & Rollback

@@ -72,20 +72,18 @@ system 模式下可用 2FA 审批命令（需配置 `two_factor` 与 `system_adm
 kapy sysauth plan restart nginx
 kapy sysauth approve <challenge_id> <totp_code>
 kapy sysauth status <challenge_id>
+kapy sysauth setup start
+kapy sysauth setup verify <totp_code>
 ```
 
-system 模式只读运维命令（Gate 5）：
+system 模式运维命令（所有 `/sys` 操作都需要 challenge）：
 
 ```bash
 kapy sys journal cli-gateway.service 80
-kapy sys read /etc/hosts
+kapy sys journal cli-gateway.service 80 --challenge <challenge_id>
+kapy sys read /etc/hosts --challenge <challenge_id>
 kapy sys read /etc/shadow --challenge <challenge_id>
-```
-
-system 模式写操作（Gate 6，默认都需要 2FA challenge）：
-
-```bash
-kapy sys cron list
+kapy sys cron list --challenge <challenge_id>
 kapy sys cron upsert backup-job "*/5 * * * *" "/usr/local/bin/backup.sh"
 kapy sys docker ps -a
 kapy sys config write /etc/myapp.conf <base64_content>
@@ -133,6 +131,10 @@ sudo systemctl disable --now cli-gateway.service
 
 建议在 `system_service.allowed_peer_uids` 中限制可调用该 socket 的本地 UID（通常是 `cli-gateway` 用户）。
 默认建议开启 `system_service.enforce_peer_uid_allowlist=true`，避免任意本地 UID 访问 root 执行器。
+建议同时开启 `system_service.enforce_peer_unit_allowlist=true`，并配置
+`system_service.allowed_peer_units=["cli-gateway-system@<id>.service"]`，
+将 root 执行器绑定到预期 system 实例。
+建议开启 `system_service.require_grant_for_all_ops=true`，确保所有 `/sys` 操作都经过 2FA->grant 流程。
 并配置 `system_service.socket_parent_mode/socket_mode/socket_uid/socket_gid`，确保目录与 Unix socket 权限最小化且可被目标网关进程访问。
 
 所有 `/sys` 操作会写入审计日志（`logging.audit.file`，JSONL）。
