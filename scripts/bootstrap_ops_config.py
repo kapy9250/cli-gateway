@@ -132,7 +132,7 @@ def main() -> int:
         print(f"BACKUP {backup_path}")
     print("SYSTEM_ADMIN_USERS", ",".join(meta.get("system_admin_users", [])))
     print("GENERATED_SECRET_USERS", ",".join(meta.get("generated_secret_users", [])))
-    print("CHANNEL_PROFILE", meta.get("channel_profile", "keep"))
+    print("CHANNEL_PROFILE", meta.get("channel_profile", "telegram-only"))
 
     if args.print_otpauth:
         two_factor = merged.get("two_factor", {}) if isinstance(merged.get("two_factor"), dict) else {}

@@ -99,6 +99,16 @@ def test_merge_channel_profile_telegram_only():
     }
 
 
+def test_merge_default_channel_profile_is_telegram_only():
+    base = _base_config()
+    out, meta = merge_ops_config(base, {})
+
+    assert out["channels"]["telegram"]["enabled"] is True
+    assert out["channels"]["discord"]["enabled"] is False
+    assert out["channels"]["email"]["enabled"] is False
+    assert meta["channel_profile"] == "telegram-only"
+
+
 def test_merge_replaces_placeholder_totp_secret():
     base = _base_config()
     base["auth"]["system_admin_users"] = ["286194552"]

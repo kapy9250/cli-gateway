@@ -50,7 +50,7 @@ def merge_ops_config(
     namespace_paths: bool = True,
     enable_two_factor: bool = True,
     generate_missing_totp: bool = True,
-    channel_profile: str = "keep",
+    channel_profile: str = "telegram-only",
 ) -> Tuple[Dict[str, object], Dict[str, object]]:
     """Build a full ops config by combining a base gateway config and privileged settings."""
     if not isinstance(base_config, dict):
