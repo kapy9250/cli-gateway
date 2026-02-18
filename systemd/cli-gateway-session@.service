@@ -27,11 +27,16 @@ Restart=always
 RestartSec=5
 
 # Hardening defaults for user-level mode
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
+ProtectProc=invisible
+ProcSubset=pid
 ReadWritePaths=/opt/cli-gateway/workspaces /opt/cli-gateway/data /opt/cli-gateway/logs
+# Hide high-risk host paths from user-level agent subprocesses.
+InaccessiblePaths=/root /home /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.monthly /etc/cron.weekly /etc/crontab /var/spool/cron /var/spool/cron/crontabs
 
 StandardOutput=journal
 StandardError=journal
