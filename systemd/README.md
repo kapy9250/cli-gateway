@@ -17,6 +17,7 @@ Both templates load:
 - runtime flags: `--instance-id %i --namespace-paths`
 - default `HOME`: `/opt/cli-gateway/data/home-%i`
 - default `CODEX_HOME`: `/opt/cli-gateway/data/home-%i/.codex`
+- units auto-create `HOME/.codex`, `HOME/.claude`, and `HOME/.gemini` on start
 
 Python runtime behavior:
 - units prefer `/opt/cli-gateway/.venv/bin/python3`
