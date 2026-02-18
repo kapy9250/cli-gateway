@@ -103,6 +103,20 @@ system_ops:
       unshare_all: true
       unshare_user: false
       share_network: true
+      # session 模式严格限制：只暴露 session 工作目录 + 必要运行时只读文件。
+      session_workspace_only: true
+      session_runtime_ro_paths:
+        - "/usr"
+        - "/bin"
+        - "/sbin"
+        - "/lib"
+        - "/lib64"
+      session_etc_ro_paths:
+        - "/etc/resolv.conf"
+        - "/etc/ssl"
+        - "/etc/ssl/certs"
+        - "/etc/ca-certificates"
+        - "/etc/nsswitch.conf"
 
 # ──────────── Privileged System Service Bridge ────────────
 # enabled=true 时，/sys 命令改为通过本地 Unix Socket 调用 root 侧 system_service_main.py。

@@ -62,6 +62,7 @@ Notes:
 - If `sandbox.bwrap.required=true`, ensure `bwrap` is runnable as the service user (some hosts block unprivileged user namespaces via AppArmor; in that case bwrap will fail open only when `required=false`).
 - `sys-executor` can run AI CLI via root-owned `bwrap` with per-session workspace constraints; this avoids host policies that block unprivileged user namespaces.
 - For `system_ops.agent_cli.bwrap`, keep `unshare_user=false` unless you explicitly need user namespaces; this avoids host UID-mapping side effects on bind-mounted `CODEX_HOME`.
+- `system_ops.agent_cli.bwrap.session_workspace_only=true` enables strict session isolation: session callers see only `/workspace`, `/sandbox-home`, and minimal runtime read-only mounts.
 
 ## Install
 

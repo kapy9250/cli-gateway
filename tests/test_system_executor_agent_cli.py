@@ -151,6 +151,9 @@ def test_agent_cli_exec_bwrap_uses_fixed_mount_points(tmp_path: Path):
     assert "--setenv HOME /sandbox-home" in joined
     assert "--setenv CODEX_HOME /sandbox-home/.codex" in joined
     assert "--chdir /workspace" in joined
+    assert "--tmpfs /etc" in joined
+    assert "--ro-bind-try /etc /etc" not in joined
+    assert "--ro-bind-try /etc/resolv.conf /etc/resolv.conf" in joined
 
 
 def test_agent_cli_exec_root_requires_setpriv_for_uid_drop(tmp_path: Path):
@@ -226,3 +229,43 @@ def test_agent_cli_exec_allows_multiline_args(tmp_path: Path):
     assert result["ok"] is True
     run_args = run_mock.call_args[0][0]
     assert run_args[2] == "line1\nline2"
+
+
+def test_agent_cli_exec_system_mode_keeps_wider_readonly_mounts(tmp_path: Path):
+    cfg = _base_config(tmp_path)
+    cfg["agent_cli"]["bwrap"] = {"enabled": True, "required": True}
+    executor = SystemExecutor(cfg)
+    cwd = tmp_path / "workspaces" / "ops-a" / "codex" / "sess_1"
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    action = {
+        "op": "agent_cli_exec",
+        "agent": "codex",
+        "mode": "system",
+        "instance_id": "ops-a",
+        "command": "codex",
+        "args": ["exec", "hello"],
+        "cwd": str(cwd),
+        "env": {},
+        "timeout_seconds": 30,
+    }
+    completed = Mock(returncode=0, stdout="ok", stderr="")
+
+    with (
+        patch("os.geteuid", return_value=1000),
+        patch("os.getegid", return_value=1000),
+        patch("shutil.which", return_value="/usr/bin/codex"),
+        patch("subprocess.run", return_value=completed) as run_mock,
+    ):
+        result = executor.agent_cli_exec(
+            action,
+            peer_uid=999,
+            peer_units={"cli-gateway-system@ops-a.service"},
+        )
+
+    assert result["ok"] is True
+    run_args = run_mock.call_args[0][0]
+    joined = " ".join(run_args)
+    assert "--ro-bind-try /etc /etc" in joined
+    tmpfs_targets = [run_args[i + 1] for i, token in enumerate(run_args[:-1]) if token == "--tmpfs"]
+    assert "/etc" not in tmpfs_targets

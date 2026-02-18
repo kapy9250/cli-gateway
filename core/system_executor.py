@@ -119,6 +119,7 @@ class SystemExecutor:
         self.agent_cli_bwrap_unshare_all = bool(bwrap_cfg.get("unshare_all", True))
         self.agent_cli_bwrap_unshare_user = bool(bwrap_cfg.get("unshare_user", False))
         self.agent_cli_bwrap_share_network = bool(bwrap_cfg.get("share_network", True))
+        self.agent_cli_bwrap_session_workspace_only = bool(bwrap_cfg.get("session_workspace_only", True))
         self.agent_cli_bwrap_readonly_paths = [
             str(v)
             for v in bwrap_cfg.get(
@@ -132,6 +133,32 @@ class SystemExecutor:
                     "/etc",
                     "/run",
                     "/opt",
+                ],
+            )
+        ]
+        self.agent_cli_bwrap_session_runtime_ro_paths = [
+            str(v)
+            for v in bwrap_cfg.get(
+                "session_runtime_ro_paths",
+                [
+                    "/usr",
+                    "/bin",
+                    "/sbin",
+                    "/lib",
+                    "/lib64",
+                ],
+            )
+        ]
+        self.agent_cli_bwrap_session_etc_ro_paths = [
+            str(v)
+            for v in bwrap_cfg.get(
+                "session_etc_ro_paths",
+                [
+                    "/etc/resolv.conf",
+                    "/etc/ssl",
+                    "/etc/ssl/certs",
+                    "/etc/ca-certificates",
+                    "/etc/nsswitch.conf",
                 ],
             )
         ]
@@ -597,8 +624,10 @@ class SystemExecutor:
         exec_argv: List[str],
         cwd: Path,
         env: Dict[str, str],
+        mode: str,
     ) -> List[str]:
         bwrap_cmd = [self.agent_cli_bwrap_command, "--die-with-parent", "--new-session"]
+        strict_session_fs = mode == "session" and self.agent_cli_bwrap_session_workspace_only
         if self.agent_cli_bwrap_unshare_all:
             bwrap_cmd.extend(["--unshare-ipc", "--unshare-pid", "--unshare-uts"])
             if self.agent_cli_bwrap_unshare_user:
@@ -606,9 +635,22 @@ class SystemExecutor:
         if not self.agent_cli_bwrap_share_network:
             bwrap_cmd.append("--unshare-net")
 
-        for path in self.agent_cli_bwrap_readonly_paths:
+        readonly_paths = self.agent_cli_bwrap_readonly_paths
+        if strict_session_fs:
+            readonly_paths = self.agent_cli_bwrap_session_runtime_ro_paths
+
+        for path in readonly_paths:
             p = str(path).strip()
             if p:
+                bwrap_cmd.extend(["--ro-bind-try", p, p])
+
+        if strict_session_fs:
+            # Hide host /etc from session callers; re-expose only minimum runtime files.
+            bwrap_cmd.extend(["--tmpfs", "/etc"])
+            for path in self.agent_cli_bwrap_session_etc_ro_paths:
+                p = str(path).strip()
+                if not p or not p.startswith("/etc"):
+                    continue
                 bwrap_cmd.extend(["--ro-bind-try", p, p])
 
         bwrap_cmd.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
@@ -793,6 +835,7 @@ class SystemExecutor:
                 exec_argv=exec_argv,
                 cwd=cwd,
                 env=env,
+                mode=caller_mode,
             )
         elif self.agent_cli_bwrap_required:
             return {"ok": False, "reason": "bwrap_required_but_disabled"}
