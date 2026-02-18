@@ -99,15 +99,15 @@ async def _require_approval(
 
     if not challenge_id:
         challenge = manager.create_challenge(ctx.user_id, action_payload)
+        manager.set_pending_approval_input(ctx.user_id, challenge.challenge_id, retry_cmd)
         await ctx.router._reply(
             ctx.message,
             "\n".join(
                 [
                     "🔐 该操作需要 2FA 审批",
                     f"- challenge_id: <code>{challenge.challenge_id}</code>",
-                    "下一步:",
-                    f"1) /sysauth approve {challenge.challenge_id} &lt;totp_code&gt;",
-                    f"2) {retry_cmd} --challenge {challenge.challenge_id}",
+                    "请直接回复 6 位验证码。",
+                    "若下一条消息不是验证码，将判定失败并结束本次验证。",
                 ]
             ),
         )

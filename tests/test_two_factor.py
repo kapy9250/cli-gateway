@@ -80,3 +80,23 @@ def test_state_file_loaded_on_startup(tmp_path):
     )
     manager = TwoFactorManager(enabled=True, state_file=str(state_file), secrets_by_user={"u1": "CONFIGSECRET999999"})
     assert manager.secrets_by_user["u1"] == "STATESECRET123456"
+
+
+def test_pending_approval_input_lifecycle():
+    secret = "JBSWY3DPEHPK3PXP"
+    manager = TwoFactorManager(enabled=True, secrets_by_user={"u1": secret})
+    action = {"op": "journal", "lines": 5}
+    challenge = manager.create_challenge("u1", action)
+    manager.set_pending_approval_input("u1", challenge.challenge_id, "/sys journal 5")
+
+    pending = manager.get_pending_approval_input("u1")
+    assert pending is not None
+    assert pending["challenge_id"] == challenge.challenge_id
+
+    code = manager._totp_code(secret, time.time())
+    ok, reason, approved = manager.approve_pending_input_code("u1", code)
+    assert ok is True
+    assert reason == "approved"
+    assert approved is not None
+    assert approved["challenge_id"] == challenge.challenge_id
+    assert manager.get_pending_approval_input("u1") is None

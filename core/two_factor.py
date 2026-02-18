@@ -41,6 +41,15 @@ class TwoFactorEnrollment:
     expires_at: float
 
 
+@dataclass
+class PendingApprovalInput:
+    user_id: str
+    challenge_id: str
+    retry_cmd: str
+    created_at: float
+    expires_at: float
+
+
 class TwoFactorManager:
     def __init__(
         self,
@@ -69,6 +78,7 @@ class TwoFactorManager:
         self.issuer = str(issuer or "CLI Gateway").strip() or "CLI Gateway"
         self._challenges: Dict[str, TwoFactorChallenge] = {}
         self._pending_enrollments: Dict[str, TwoFactorEnrollment] = {}
+        self._pending_approval_inputs: Dict[str, PendingApprovalInput] = {}
         self._load_state()
 
     @staticmethod
@@ -119,9 +129,81 @@ class TwoFactorManager:
         stale = [cid for cid, ch in self._challenges.items() if ch.expires_at <= ts]
         for cid in stale:
             self._challenges.pop(cid, None)
+        stale_approval = [
+            uid for uid, item in self._pending_approval_inputs.items() if item.expires_at <= ts
+        ]
+        for uid in stale_approval:
+            self._pending_approval_inputs.pop(uid, None)
         stale_enrollments = [uid for uid, st in self._pending_enrollments.items() if st.expires_at <= ts]
         for uid in stale_enrollments:
             self._pending_enrollments.pop(uid, None)
+
+    def set_pending_approval_input(self, user_id: str, challenge_id: str, retry_cmd: str) -> None:
+        now = time.time()
+        self._cleanup(now)
+        uid = str(user_id)
+        challenge = self._challenges.get(str(challenge_id))
+        expires_at = challenge.expires_at if challenge else (now + self.ttl_seconds)
+        self._pending_approval_inputs[uid] = PendingApprovalInput(
+            user_id=uid,
+            challenge_id=str(challenge_id),
+            retry_cmd=str(retry_cmd).strip(),
+            created_at=now,
+            expires_at=expires_at,
+        )
+
+    def get_pending_approval_input(self, user_id: str) -> Optional[dict]:
+        now = time.time()
+        self._cleanup(now)
+        uid = str(user_id)
+        item = self._pending_approval_inputs.get(uid)
+        if not item:
+            return None
+        challenge = self._challenges.get(item.challenge_id)
+        if challenge is None or challenge.expires_at <= now:
+            self._pending_approval_inputs.pop(uid, None)
+            return None
+        return {
+            "user_id": item.user_id,
+            "challenge_id": item.challenge_id,
+            "retry_cmd": item.retry_cmd,
+            "created_at": item.created_at,
+            "expires_at": item.expires_at,
+        }
+
+    def clear_pending_approval_input(self, user_id: str, revoke_challenge: bool = False) -> bool:
+        self._cleanup()
+        uid = str(user_id)
+        item = self._pending_approval_inputs.pop(uid, None)
+        if not item:
+            return False
+        if revoke_challenge:
+            self._challenges.pop(item.challenge_id, None)
+        return True
+
+    def approve_pending_input_code(self, user_id: str, code: str) -> Tuple[bool, str, Optional[dict]]:
+        now = time.time()
+        self._cleanup(now)
+        uid = str(user_id)
+        item = self._pending_approval_inputs.get(uid)
+        if not item:
+            return False, "pending_approval_not_found", None
+        challenge = self._challenges.get(item.challenge_id)
+        if challenge is None or challenge.expires_at <= now:
+            self._pending_approval_inputs.pop(uid, None)
+            if challenge is not None and challenge.expires_at <= now:
+                self._challenges.pop(item.challenge_id, None)
+            return False, "challenge_expired", None
+        ok, reason = self.approve_challenge(item.challenge_id, uid, code)
+        if not ok:
+            self._pending_approval_inputs.pop(uid, None)
+            self._challenges.pop(item.challenge_id, None)
+            return False, reason, None
+        self._pending_approval_inputs.pop(uid, None)
+        return True, "approved", {
+            "challenge_id": item.challenge_id,
+            "retry_cmd": item.retry_cmd,
+        }
 
     def build_totp_uri(self, secret: str, account_name: str, issuer: Optional[str] = None) -> str:
         account_value = str(account_name or "").strip()
@@ -367,6 +449,10 @@ class TwoFactorManager:
             return False, "action_hash_mismatch"
 
         self._challenges.pop(str(challenge_id), None)
+        # Also clear pending interactive input if it targets the consumed challenge.
+        for uid, pending in list(self._pending_approval_inputs.items()):
+            if pending.challenge_id == str(challenge_id):
+                self._pending_approval_inputs.pop(uid, None)
         return True, "approved"
 
     def status(self, challenge_id: str, user_id: str) -> Dict[str, object]:

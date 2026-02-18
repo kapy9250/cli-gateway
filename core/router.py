@@ -80,6 +80,7 @@ class Router:
         from core.middlewares.logging_mw import logging_middleware
         from core.middlewares.auth_mw import auth_middleware
         from core.middlewares.mode_guard import mode_guard_middleware
+        from core.middlewares.two_factor_reply import two_factor_reply_middleware
         from core.middlewares.command_parser import command_parser_middleware
         from core.middlewares.session_resolver import session_resolver_middleware
         from core.middlewares.agent_dispatcher import agent_dispatcher_middleware
@@ -89,6 +90,7 @@ class Router:
                 logging_middleware,
                 auth_middleware,
                 mode_guard_middleware,
+                two_factor_reply_middleware,
                 command_parser_middleware,
                 session_resolver_middleware,
                 agent_dispatcher_middleware,
