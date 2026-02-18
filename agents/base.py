@@ -181,6 +181,33 @@ class BaseAgent(ABC):
         """Apply runtime command sandbox (bwrap) when configured/enabled."""
         return self.command_sandbox.wrap(command, args, work_dir=work_dir, env=env)
 
+    def _build_remote_action(
+        self,
+        *,
+        session: SessionInfo,
+        command: str,
+        args: List[str],
+        env: Dict[str, str],
+        timeout_seconds: int,
+        run_as_root: bool = False,
+        stream: bool = False,
+    ) -> Dict[str, Any]:
+        action: Dict[str, Any] = {
+            "op": "agent_cli_exec",
+            "agent": self.name,
+            "mode": self.runtime_mode,
+            "instance_id": self.instance_id,
+            "command": str(command),
+            "args": [str(v) for v in args],
+            "cwd": str(session.work_dir),
+            "env": dict(env),
+            "timeout_seconds": int(timeout_seconds),
+            "run_as_root": bool(run_as_root),
+        }
+        if stream:
+            action["stream"] = True
+        return action
+
     async def _remote_execute_cli(
         self,
         *,
@@ -196,19 +223,64 @@ class BaseAgent(ABC):
             if self.remote_exec_required:
                 return {"ok": False, "reason": "system_client_required"}
             return None
-        action = {
-            "op": "agent_cli_exec",
-            "agent": self.name,
-            "mode": self.runtime_mode,
-            "instance_id": self.instance_id,
-            "command": str(command),
-            "args": [str(v) for v in args],
-            "cwd": str(session.work_dir),
-            "env": dict(env),
-            "timeout_seconds": int(timeout_seconds),
-            "run_as_root": bool(run_as_root),
-        }
+        action = self._build_remote_action(
+            session=session,
+            command=command,
+            args=args,
+            env=env,
+            timeout_seconds=int(timeout_seconds),
+            run_as_root=bool(run_as_root),
+            stream=False,
+        )
         return await self.system_client.execute(str(session.user_id), action)
+
+    async def _remote_execute_cli_stream(
+        self,
+        *,
+        session: SessionInfo,
+        command: str,
+        args: List[str],
+        env: Dict[str, str],
+        timeout_seconds: int,
+        run_as_root: bool = False,
+    ) -> Optional[AsyncIterator[Dict[str, object]]]:
+        """Route CLI invocation through system service with stream frames when supported."""
+        if self.system_client is None:
+            if self.remote_exec_required:
+                async def _required_error() -> AsyncIterator[Dict[str, object]]:
+                    yield {"event": "done", "ok": False, "reason": "system_client_required"}
+                return _required_error()
+            return None
+
+        if hasattr(self.system_client, "execute_stream"):
+            action = self._build_remote_action(
+                session=session,
+                command=command,
+                args=args,
+                env=env,
+                timeout_seconds=int(timeout_seconds),
+                run_as_root=bool(run_as_root),
+                stream=True,
+            )
+            return self.system_client.execute_stream(str(session.user_id), action)
+
+        single = await self._remote_execute_cli(
+            session=session,
+            command=command,
+            args=args,
+            env=env,
+            timeout_seconds=int(timeout_seconds),
+            run_as_root=bool(run_as_root),
+        )
+        if single is None:
+            return None
+
+        async def _single_frame() -> AsyncIterator[Dict[str, object]]:
+            payload = dict(single if isinstance(single, dict) else {"ok": False, "reason": "response_not_object"})
+            payload.setdefault("event", "done")
+            yield payload
+
+        return _single_frame()
 
     @abstractmethod
     async def create_session(

@@ -87,7 +87,7 @@ class StreamingCliAgent(BaseAgent):
             env.update(self.config.get('env', {}))
             timeout = self.config.get('timeout', 300)
 
-            remote_resp = await self._remote_execute_cli(
+            remote_stream = await self._remote_execute_cli_stream(
                 session=session,
                 command=command,
                 args=args,
@@ -95,21 +95,66 @@ class StreamingCliAgent(BaseAgent):
                 timeout_seconds=int(timeout),
                 run_as_root=bool(run_as_root),
             )
-            if remote_resp is not None:
-                if not remote_resp.get("ok", False):
-                    reason = str(remote_resp.get("reason", "remote_exec_failed"))
-                    yield f"❌ 远程执行失败: {reason}"
-                    stderr = str(remote_resp.get("stderr", "") or "").strip()
-                    if stderr:
-                        yield f"\nError: {stderr}"
+            if remote_stream is not None:
+                stderr_chunks: list[str] = []
+                try:
+                    async for frame in remote_stream:
+                        if not isinstance(frame, dict):
+                            continue
+
+                        event = str(frame.get("event", "done")).strip().lower()
+                        if event == "heartbeat":
+                            continue
+
+                        if event == "chunk":
+                            data = str(frame.get("data", "") or "")
+                            if not data:
+                                continue
+                            stream_name = str(frame.get("stream", "stdout")).strip().lower()
+                            if stream_name == "stderr":
+                                stderr_chunks.append(data)
+                                continue
+                            yield data
+                            continue
+
+                        if event not in {"done", "error"}:
+                            continue
+
+                        stdout = str(frame.get("stdout", "") or "")
+                        stderr = str(frame.get("stderr", "") or "").strip()
+                        if stdout:
+                            yield stdout
+                        if not stderr:
+                            stderr = "".join(stderr_chunks).strip()
+                        if stderr:
+                            logger.warning(f"{self.agent_label} stderr: {stderr}")
+
+                        if bool(frame.get("ok", False)):
+                            return
+
+                        reason = str(frame.get("reason", "")).strip()
+                        if not reason:
+                            if frame.get("timed_out"):
+                                reason = "agent_cli_timeout"
+                            elif "returncode" in frame:
+                                reason = f"exit_code:{frame.get('returncode')}"
+                            else:
+                                reason = "remote_exec_failed"
+                        yield f"❌ 远程执行失败: {reason}"
+                        if stderr:
+                            yield f"\nError: {stderr}"
+                        return
+
+                    # Stream ended without terminal frame.
+                    yield "❌ 远程执行失败: empty_response"
                     return
-                stdout = str(remote_resp.get("stdout", "") or "")
-                stderr = str(remote_resp.get("stderr", "") or "")
-                if stdout:
-                    yield stdout
-                if stderr:
-                    logger.warning(f"{self.agent_label} stderr: {stderr}")
-                return
+                finally:
+                    aclose = getattr(remote_stream, "aclose", None)
+                    if callable(aclose):
+                        try:
+                            await aclose()
+                        except Exception:
+                            pass
 
             command, args, env = self._wrap_command(
                 command,

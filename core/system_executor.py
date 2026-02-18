@@ -7,7 +7,9 @@ import subprocess
 import time
 import os
 import pwd
+import queue
 import shutil
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -82,6 +84,14 @@ class SystemExecutor:
         self.agent_cli_enabled = bool(agent_cli_cfg.get("enabled", True))
         self.agent_cli_max_output_bytes = max(4096, int(agent_cli_cfg.get("max_output_bytes", 512000)))
         self.agent_cli_max_timeout_seconds = max(1, int(agent_cli_cfg.get("max_timeout_seconds", 300)))
+        self.agent_cli_stream_heartbeat_seconds = max(
+            1.0,
+            float(agent_cli_cfg.get("stream_heartbeat_seconds", 2.0)),
+        )
+        self.agent_cli_stream_queue_poll_seconds = max(
+            0.05,
+            min(float(agent_cli_cfg.get("stream_queue_poll_seconds", 0.2)), 2.0),
+        )
         self.agent_cli_max_args = max(1, int(agent_cli_cfg.get("max_args", 256)))
         self.agent_cli_allowed_agents = {
             str(v).strip().lower()
@@ -808,19 +818,19 @@ class SystemExecutor:
             "run_as_root": run_as_root,
         }, None
 
-    def agent_cli_exec(
+    def _prepare_agent_cli_exec(
         self,
         action: dict,
         *,
         peer_uid: Optional[int] = None,
         peer_units: Optional[Set[str]] = None,
-    ) -> Dict[str, object]:
+    ) -> Tuple[Optional[Dict[str, object]], Optional[Dict[str, object]]]:
         if not self.enabled:
-            return {"ok": False, "reason": "system_executor_disabled"}
+            return None, {"ok": False, "reason": "system_executor_disabled"}
 
         identity = self._derive_gateway_identity(set(peer_units or set()))
         if identity is None:
-            return {"ok": False, "reason": "caller_identity_unknown"}
+            return None, {"ok": False, "reason": "caller_identity_unknown"}
         caller_mode, caller_instance_id = identity
 
         normalized, error = self._normalize_agent_exec_request(
@@ -829,7 +839,7 @@ class SystemExecutor:
             expected_instance_id=caller_instance_id,
         )
         if error:
-            return {"ok": False, "reason": error}
+            return None, {"ok": False, "reason": error}
         assert normalized is not None
 
         command = str(normalized["command"])
@@ -854,7 +864,7 @@ class SystemExecutor:
                     None if run_as_root else self.agent_cli_run_gid,
                 )
         except Exception as e:
-            return {"ok": False, "reason": f"agent_cli_home_setup_failed:{e}"}
+            return None, {"ok": False, "reason": f"agent_cli_home_setup_failed:{e}"}
 
         exec_argv, exec_error = self._build_agent_exec_argv(
             command=command,
@@ -862,7 +872,7 @@ class SystemExecutor:
             run_as_root=run_as_root,
         )
         if exec_error:
-            return {"ok": False, "reason": exec_error}
+            return None, {"ok": False, "reason": exec_error}
         assert exec_argv is not None
 
         run_cmd = exec_argv
@@ -876,7 +886,58 @@ class SystemExecutor:
                 mode=caller_mode,
             )
         elif self.agent_cli_bwrap_required:
-            return {"ok": False, "reason": "bwrap_required_but_disabled"}
+            return None, {"ok": False, "reason": "bwrap_required_but_disabled"}
+
+        return {
+            "run_cmd": run_cmd,
+            "timeout_seconds": timeout_seconds,
+            "env": env,
+            "mode": caller_mode,
+            "instance_id": caller_instance_id,
+            "peer_uid": peer_uid,
+            "run_as_root": run_as_root,
+        }, None
+
+    @staticmethod
+    def _stream_reader_thread(
+        stream,
+        stream_name: str,
+        out_queue: "queue.Queue[Tuple[str, str, bytes]]",
+    ) -> None:
+        try:
+            while True:
+                chunk = stream.readline()
+                if not chunk:
+                    break
+                if isinstance(chunk, str):
+                    payload = chunk.encode("utf-8", errors="replace")
+                else:
+                    payload = bytes(chunk)
+                out_queue.put(("chunk", stream_name, payload))
+        except Exception as e:  # noqa: BLE001
+            out_queue.put(("pipe_error", stream_name, str(e).encode("utf-8", errors="replace")))
+        finally:
+            out_queue.put(("eof", stream_name, b""))
+
+    def agent_cli_exec(
+        self,
+        action: dict,
+        *,
+        peer_uid: Optional[int] = None,
+        peer_units: Optional[Set[str]] = None,
+    ) -> Dict[str, object]:
+        prepared, prep_error = self._prepare_agent_cli_exec(
+            action,
+            peer_uid=peer_uid,
+            peer_units=peer_units,
+        )
+        if prep_error:
+            return prep_error
+        assert prepared is not None
+
+        run_cmd = list(prepared["run_cmd"])
+        timeout_seconds = int(prepared["timeout_seconds"])
+        env = dict(prepared["env"])
 
         try:
             completed = subprocess.run(
@@ -901,6 +962,10 @@ class SystemExecutor:
                 "stderr": stderr_text,
                 "stdout_truncated": out_truncated,
                 "stderr_truncated": err_truncated,
+                "mode": prepared["mode"],
+                "instance_id": prepared["instance_id"],
+                "peer_uid": prepared["peer_uid"],
+                "run_as_root": prepared["run_as_root"],
             }
         except FileNotFoundError as e:
             return {"ok": False, "reason": f"agent_cli_exec_error:{e}"}
@@ -919,8 +984,157 @@ class SystemExecutor:
             "stderr": stderr,
             "stdout_truncated": out_truncated,
             "stderr_truncated": err_truncated,
-            "mode": caller_mode,
-            "instance_id": caller_instance_id,
-            "peer_uid": peer_uid,
-            "run_as_root": run_as_root,
+            "mode": prepared["mode"],
+            "instance_id": prepared["instance_id"],
+            "peer_uid": prepared["peer_uid"],
+            "run_as_root": prepared["run_as_root"],
         }
+
+    def agent_cli_exec_stream(
+        self,
+        action: dict,
+        *,
+        peer_uid: Optional[int] = None,
+        peer_units: Optional[Set[str]] = None,
+    ):
+        prepared, prep_error = self._prepare_agent_cli_exec(
+            action,
+            peer_uid=peer_uid,
+            peer_units=peer_units,
+        )
+        if prep_error:
+            payload = dict(prep_error)
+            payload.setdefault("event", "done")
+            yield payload
+            return
+        assert prepared is not None
+
+        run_cmd = list(prepared["run_cmd"])
+        timeout_seconds = int(prepared["timeout_seconds"])
+        env = dict(prepared["env"])
+        max_output = int(self.agent_cli_max_output_bytes)
+        heartbeat_seconds = float(self.agent_cli_stream_heartbeat_seconds)
+        poll_seconds = float(self.agent_cli_stream_queue_poll_seconds)
+
+        try:
+            proc = subprocess.Popen(
+                run_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+        except Exception as e:  # noqa: BLE001
+            yield {"event": "done", "ok": False, "reason": f"agent_cli_exec_error:{e}"}
+            return
+
+        if proc.stdout is None or proc.stderr is None:
+            yield {"event": "done", "ok": False, "reason": "agent_cli_pipe_unavailable"}
+            return
+
+        events: "queue.Queue[Tuple[str, str, bytes]]" = queue.Queue()
+        out_parts: List[str] = []
+        err_parts: List[str] = []
+        out_seen_bytes = 0
+        err_seen_bytes = 0
+        out_buffered_bytes = 0
+        err_buffered_bytes = 0
+        out_truncated = False
+        err_truncated = False
+        timed_out = False
+        eof_streams: Set[str] = set()
+
+        t_stdout = threading.Thread(
+            target=self._stream_reader_thread,
+            args=(proc.stdout, "stdout", events),
+            daemon=True,
+        )
+        t_stderr = threading.Thread(
+            target=self._stream_reader_thread,
+            args=(proc.stderr, "stderr", events),
+            daemon=True,
+        )
+        t_stdout.start()
+        t_stderr.start()
+
+        started = time.monotonic()
+        last_heartbeat = started
+        while True:
+            now = time.monotonic()
+            if now - started > timeout_seconds:
+                timed_out = True
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+            try:
+                kind, stream_name, payload = events.get(timeout=poll_seconds)
+            except queue.Empty:
+                kind, stream_name, payload = "", "", b""
+
+            if kind == "chunk":
+                text = payload.decode("utf-8", errors="replace")
+                stream_limit = max_output
+                if stream_name == "stderr":
+                    err_seen_bytes += len(payload)
+                    if err_seen_bytes > stream_limit:
+                        err_truncated = True
+                    if err_buffered_bytes < stream_limit:
+                        keep = payload[: max(0, stream_limit - err_buffered_bytes)]
+                        err_buffered_bytes += len(keep)
+                        if keep:
+                            err_parts.append(keep.decode("utf-8", errors="replace"))
+                    if not err_truncated:
+                        yield {"event": "chunk", "stream": "stderr", "data": text}
+                else:
+                    out_seen_bytes += len(payload)
+                    if out_seen_bytes > stream_limit:
+                        out_truncated = True
+                    if out_buffered_bytes < stream_limit:
+                        keep = payload[: max(0, stream_limit - out_buffered_bytes)]
+                        out_buffered_bytes += len(keep)
+                        if keep:
+                            out_parts.append(keep.decode("utf-8", errors="replace"))
+                    if not out_truncated:
+                        yield {"event": "chunk", "stream": "stdout", "data": text}
+            elif kind == "pipe_error":
+                msg = payload.decode("utf-8", errors="replace")
+                err_parts.append(f"[{stream_name}_read_error] {msg}")
+                yield {"event": "chunk", "stream": "stderr", "data": f"[{stream_name}_read_error] {msg}\n"}
+            elif kind == "eof":
+                eof_streams.add(stream_name)
+
+            now = time.monotonic()
+            if now - last_heartbeat >= heartbeat_seconds:
+                yield {"event": "heartbeat"}
+                last_heartbeat = now
+
+            if timed_out and proc.poll() is not None and len(eof_streams) >= 2 and events.empty():
+                break
+            if proc.poll() is not None and len(eof_streams) >= 2 and events.empty():
+                break
+
+        try:
+            returncode = int(proc.wait(timeout=1.0))
+        except Exception:
+            returncode = -1
+
+        ok = (not timed_out) and (returncode == 0)
+        done = {
+            "event": "done",
+            "ok": ok,
+            "returncode": returncode,
+            "timed_out": timed_out,
+            "stdout": "".join(out_parts),
+            "stderr": "".join(err_parts),
+            "stdout_truncated": out_truncated,
+            "stderr_truncated": err_truncated,
+            "mode": prepared["mode"],
+            "instance_id": prepared["instance_id"],
+            "peer_uid": prepared["peer_uid"],
+            "run_as_root": prepared["run_as_root"],
+        }
+        if timed_out:
+            done["reason"] = "agent_cli_timeout"
+            done["timeout_seconds"] = timeout_seconds
+        yield done

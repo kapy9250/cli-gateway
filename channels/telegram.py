@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 class TelegramChannel(BaseChannel):
     """Telegram Bot implementation"""
+
+    supports_streaming = True
     
     def __init__(self, config: dict):
         super().__init__(config)
@@ -29,6 +31,7 @@ class TelegramChannel(BaseChannel):
         self.token = config['token']
         self.parse_mode = ParseMode.HTML if config.get('parse_mode') == 'HTML' else ParseMode.MARKDOWN_V2
         self.max_length = config.get('max_message_length', 4096)
+        self.stream_update_interval = max(0.0, float(config.get('stream_update_interval', 0.0)))
         self.enforce_at_sender = config.get('enforce_at_sender', True)
         self._reply_target: dict = {}
         

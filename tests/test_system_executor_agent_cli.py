@@ -346,3 +346,69 @@ def test_agent_cli_exec_system_root_bypasses_setpriv_and_bwrap(tmp_path: Path):
     run_args = run_mock.call_args[0][0]
     assert run_args[:2] == ["codex", "exec"]
     assert run_args[0] != "bwrap"
+
+
+def test_agent_cli_exec_stream_emits_stdout_chunks_and_done(tmp_path: Path):
+    cfg = _base_config(tmp_path)
+    executor = SystemExecutor(cfg)
+    cwd = tmp_path / "workspaces" / "user-main" / "codex" / "sess_1"
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    action = {
+        "op": "agent_cli_exec",
+        "agent": "codex",
+        "mode": "session",
+        "instance_id": "user-main",
+        "command": "codex",
+        "args": ["exec", "hello"],
+        "cwd": str(cwd),
+        "env": {},
+        "timeout_seconds": 30,
+    }
+
+    class _FakePipe:
+        def __init__(self, payload: bytes):
+            self._parts = payload.splitlines(keepends=True)
+
+        def readline(self):
+            if not self._parts:
+                return b""
+            return self._parts.pop(0)
+
+    class _FakeProcess:
+        def __init__(self):
+            self.stdout = _FakePipe(b"line1\nline2\n")
+            self.stderr = _FakePipe(b"")
+            self.returncode = 0
+
+        def poll(self):
+            if not self.stdout._parts and not self.stderr._parts:
+                return self.returncode
+            return None
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    with (
+        patch("os.geteuid", return_value=1000),
+        patch("os.getegid", return_value=1000),
+        patch("shutil.which", return_value="/usr/bin/codex"),
+        patch("subprocess.Popen", return_value=_FakeProcess()),
+    ):
+        frames = list(
+            executor.agent_cli_exec_stream(
+                action,
+                peer_uid=999,
+                peer_units={"cli-gateway-session@user-main.service"},
+            )
+        )
+
+    chunk_frames = [f for f in frames if f.get("event") == "chunk" and f.get("stream") == "stdout"]
+    assert chunk_frames
+    assert chunk_frames[0]["data"] == "line1\n"
+    assert chunk_frames[1]["data"] == "line2\n"
+    assert frames[-1]["event"] == "done"
+    assert frames[-1]["ok"] is True

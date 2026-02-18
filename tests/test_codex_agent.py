@@ -18,6 +18,17 @@ class FakeRemoteClient:
         return dict(self.response)
 
 
+class FakeRemoteStreamClient:
+    def __init__(self, frames: list[dict]):
+        self.frames = [dict(f) for f in frames]
+        self.calls = []
+
+    async def execute_stream(self, user_id: str, action: dict, grant_token: str = None):
+        self.calls.append({"user_id": str(user_id), "action": dict(action or {})})
+        for frame in self.frames:
+            yield dict(frame)
+
+
 @pytest.fixture
 def codex_config():
     return {
@@ -126,6 +137,36 @@ class TestSendMessage:
         assert action["agent"] == "codex"
         assert action["mode"] == "session"
         assert action["instance_id"] == "user-main"
+
+    @pytest.mark.asyncio
+    async def test_send_message_uses_remote_stream_frames_when_supported(self, tmp_path, codex_config):
+        remote = FakeRemoteStreamClient(
+            [
+                {"event": "chunk", "stream": "stdout", "data": "hello "},
+                {"event": "chunk", "stream": "stdout", "data": "world"},
+                {"event": "done", "ok": True, "returncode": 0},
+            ]
+        )
+        agent = CodexAgent(
+            "codex",
+            codex_config,
+            tmp_path,
+            runtime_mode="session",
+            instance_id="user-main",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            chunks = []
+            async for chunk in agent.send_message(session.session_id, "test"):
+                chunks.append(chunk)
+
+        assert "".join(chunks) == "hello world"
+        assert not mock_exec.called
+        assert len(remote.calls) == 1
+        action = remote.calls[0]["action"]
+        assert action["stream"] is True
 
     @pytest.mark.asyncio
     async def test_send_message_fails_closed_when_remote_required_but_unconfigured(self, tmp_path, codex_config):

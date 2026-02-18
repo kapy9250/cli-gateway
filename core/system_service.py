@@ -146,6 +146,31 @@ class SystemServiceServer:
             except Exception as e:
                 await self._reply(writer, {"ok": False, "reason": f"request_decode_failed:{e}"})
                 return
+
+            if not isinstance(req, dict):
+                await self._reply(writer, {"ok": False, "reason": "request_not_object"})
+                return
+            if not req.get("user_id"):
+                await self._reply(writer, {"ok": False, "reason": "user_id_required"})
+                return
+
+            action = req.get("action")
+            if isinstance(action, dict):
+                op = str(action.get("op", "")).strip().lower()
+                stream_requested = bool(action.get("stream", False))
+                if op == "agent_cli_exec" and stream_requested:
+                    grant_err = self._verify_grant(req, action)
+                    if grant_err:
+                        await self._reply(writer, grant_err)
+                        return
+                    await self._stream_agent_cli_exec(
+                        writer=writer,
+                        action=action,
+                        peer_uid=peer_uid,
+                        peer_units=peer_units,
+                    )
+                    return
+
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
@@ -425,3 +450,57 @@ class SystemServiceServer:
                 peer_units=set(peer_units or set()),
             )
         return {"ok": False, "reason": "op_not_supported"}
+
+    @staticmethod
+    def _next_stream_frame(iterator):
+        return next(iterator)
+
+    async def _stream_agent_cli_exec(
+        self,
+        *,
+        writer: asyncio.StreamWriter,
+        action: dict,
+        peer_uid: Optional[int],
+        peer_units: Set[str],
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        stream_fn = getattr(self.executor, "agent_cli_exec_stream", None)
+        if not callable(stream_fn):
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.executor.agent_cli_exec(
+                    action,
+                    peer_uid=peer_uid,
+                    peer_units=set(peer_units or set()),
+                ),
+            )
+            payload = dict(result if isinstance(result, dict) else {"ok": False, "reason": "executor_result_not_object"})
+            payload.setdefault("event", "done")
+            await self._reply(writer, payload)
+            return
+
+        try:
+            iterator = stream_fn(
+                action,
+                peer_uid=peer_uid,
+                peer_units=set(peer_units or set()),
+            )
+            while True:
+                try:
+                    frame = await loop.run_in_executor(None, self._next_stream_frame, iterator)
+                except StopIteration:
+                    break
+                except Exception as e:
+                    await self._reply(writer, {"event": "error", "ok": False, "reason": f"stream_error:{e}"})
+                    return
+
+                if not isinstance(frame, dict):
+                    frame = {"event": "error", "ok": False, "reason": "stream_frame_not_object"}
+                frame.setdefault("event", "done")
+                await self._reply(writer, frame)
+
+                event = str(frame.get("event", "")).strip().lower()
+                if event in {"done", "error"}:
+                    return
+        except Exception as e:
+            await self._reply(writer, {"event": "error", "ok": False, "reason": f"stream_init_error:{e}"})

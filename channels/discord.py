@@ -19,11 +19,14 @@ logger = logging.getLogger(__name__)
 class DiscordChannel(BaseChannel):
     """Discord Bot implementation using discord.py"""
 
+    supports_streaming = True
+
     def __init__(self, config: dict):
         super().__init__(config)
 
         self.token = config['token']
         self.max_length = config.get('max_message_length', 2000)
+        self.stream_update_interval = max(0.0, float(config.get('stream_update_interval', 0.0)))
         self.allowed_guilds = set(config.get('allowed_guilds', []))
         self.allow_bots = config.get('allow_bots', config.get('allowBots', True))
         self.enforce_at_sender = config.get('enforce_at_sender', True)

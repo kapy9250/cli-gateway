@@ -71,6 +71,9 @@ class StreamingDelivery:
         buffer = ""
         message_id = None
         last_update = 0.0
+        update_interval = float(getattr(ctx.channel, "stream_update_interval", STREAM_UPDATE_INTERVAL))
+        if update_interval < 0:
+            update_interval = 0.0
         chunk_iter = chunks.__aiter__()
         while True:
             if cancel_event.is_set():
@@ -88,7 +91,7 @@ class StreamingDelivery:
             now = time.time()
             if chunk:
                 buffer += chunk
-                if now - last_update >= STREAM_UPDATE_INTERVAL:
+                if now - last_update >= update_interval:
                     if message_id is None:
                         message_id = await ctx.channel.send_text(
                             ctx.message.chat_id,

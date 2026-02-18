@@ -50,6 +50,21 @@ class FakeExecutor:
             "peer_units": sorted(peer_units or set()),
         }
 
+    def agent_cli_exec_stream(self, action, peer_uid=None, peer_units=None):
+        yield {"event": "chunk", "stream": "stdout", "data": "agent-"}
+        yield {
+            "event": "done",
+            "ok": True,
+            "returncode": 0,
+            "timed_out": False,
+            "stdout": "agent-ok",
+            "stderr": "",
+            "mode": "session",
+            "instance_id": "user-main",
+            "peer_uid": peer_uid,
+            "peer_units": sorted(peer_units or set()),
+        }
+
 
 class BlockingExecutor(FakeExecutor):
     def docker_exec(self, args):
@@ -336,5 +351,40 @@ async def test_agent_cli_exec_is_exempt_from_grant_by_default(tmp_path):
         allowed = await client.execute("u1", action)
         assert allowed.get("ok") is True
         assert allowed.get("stdout") == "agent-ok"
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_agent_cli_exec_stream_roundtrip(tmp_path):
+    socket_path = _short_socket_path(tmp_path)
+    server = SystemServiceServer(
+        socket_path=str(socket_path),
+        executor=FakeExecutor(),
+    )
+    await server.start()
+    try:
+        client = SystemServiceClient(str(socket_path), timeout_seconds=2.0)
+        action = {
+            "op": "agent_cli_exec",
+            "stream": True,
+            "agent": "codex",
+            "mode": "session",
+            "instance_id": "user-main",
+            "command": "codex",
+            "args": ["exec", "hello"],
+            "cwd": "/tmp",
+            "env": {},
+            "timeout_seconds": 30,
+        }
+        frames = []
+        async for frame in client.execute_stream("u1", action):
+            frames.append(frame)
+
+        assert len(frames) >= 2
+        assert frames[0].get("event") == "chunk"
+        assert frames[0].get("data") == "agent-"
+        assert frames[-1].get("event") == "done"
+        assert frames[-1].get("ok") is True
     finally:
         await server.stop()
