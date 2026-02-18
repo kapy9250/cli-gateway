@@ -24,8 +24,21 @@ class ClaudeCodeAgent(BaseAgent):
     Uses non-interactive mode: claude -p "prompt" --session-id <sid> --output-format text
     """
 
-    def __init__(self, name: str, config: dict, workspace_base: Path):
-        super().__init__(name, config, workspace_base)
+    def __init__(
+        self,
+        name: str,
+        config: dict,
+        workspace_base: Path,
+        runtime_mode: str = "session",
+        sandbox_config: Optional[dict] = None,
+    ):
+        super().__init__(
+            name=name,
+            config=config,
+            workspace_base=workspace_base,
+            runtime_mode=runtime_mode,
+            sandbox_config=sandbox_config,
+        )
         # Track running subprocesses per session for cleanup
         self._processes: Dict[str, asyncio.subprocess.Process] = {}
         # Track which sessions have sent their first message
@@ -167,6 +180,12 @@ class ClaudeCodeAgent(BaseAgent):
             # Timeout
             timeout = self.config.get('timeout', 300)
 
+            command, args, env = self._wrap_command(
+                command,
+                args,
+                work_dir=session.work_dir,
+                env=env,
+            )
             logger.info(f"Executing: {command} {' '.join(args)}")
 
             # Execute

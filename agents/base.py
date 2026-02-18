@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional, List, Dict, Any
 from pathlib import Path
 
+from utils.bwrap_sandbox import BwrapSandbox
+
 
 @dataclass
 class UsageInfo:
@@ -55,7 +57,14 @@ class SessionInfo:
 class BaseAgent(ABC):
     """Base class for CLI agent adapters"""
     
-    def __init__(self, name: str, config: dict, workspace_base: Path):
+    def __init__(
+        self,
+        name: str,
+        config: dict,
+        workspace_base: Path,
+        runtime_mode: str = "session",
+        sandbox_config: Optional[dict] = None,
+    ):
         self.name = name
         self.config = config
         self.workspace_base = workspace_base / name
@@ -63,6 +72,7 @@ class BaseAgent(ABC):
         self.sessions: Dict[str, SessionInfo] = {}
         self._last_usage: Dict[str, UsageInfo] = {}
         self._processes: Dict[str, Any] = {}  # session_id -> running subprocess
+        self.command_sandbox = BwrapSandbox(runtime_mode=runtime_mode, sandbox_config=sandbox_config)
     
     @staticmethod
     def init_workspace(work_dir: Path) -> None:
@@ -151,6 +161,17 @@ class BaseAgent(ABC):
                     args.extend([param_flag, str(value)])
 
         return args
+
+    def _wrap_command(
+        self,
+        command: str,
+        args: List[str],
+        *,
+        work_dir: Path,
+        env: Dict[str, str],
+    ) -> tuple[str, List[str], Dict[str, str]]:
+        """Apply runtime command sandbox (bwrap) when configured/enabled."""
+        return self.command_sandbox.wrap(command, args, work_dir=work_dir, env=env)
 
     @abstractmethod
     async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:

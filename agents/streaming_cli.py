@@ -65,6 +65,12 @@ class StreamingCliAgent(BaseAgent):
             env.update(self.config.get('env', {}))
             timeout = self.config.get('timeout', 300)
 
+            command, args, env = self._wrap_command(
+                command,
+                args,
+                work_dir=session.work_dir,
+                env=env,
+            )
             logger.info(f"Executing: {command} {' '.join(args)}")
 
             try:

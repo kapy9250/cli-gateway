@@ -13,6 +13,21 @@ runtime:
   instance_id: "${CLI_GATEWAY_INSTANCE_ID}"
   namespace_paths: false  # If true, writable paths are auto-namespaced by instance_id
 
+# ──────────── User Mode Sandbox (bubblewrap) ────────────
+# Applied only when runtime.mode=session.
+# If bwrap is unavailable and required=false, service falls back to direct execution.
+sandbox:
+  bwrap:
+    enabled: true
+    required: false
+    command: "bwrap"
+    share_network: true
+    unshare_all: true
+    readonly_paths: []
+    extra_writable_paths: []
+    mask_dirs: []
+    mask_files: []
+
 # ──────────── 鉴权 ────────────
 # 全局设置：速率限制、管理员等
 auth:

@@ -9,6 +9,7 @@ This directory provides templates for split-plane deployment:
 User/session hardening defaults:
 - hide sensitive host paths (`/root`, cron directories) via `InaccessiblePaths`
 - isolate process visibility via `ProtectProc=invisible`
+- optional per-command `bwrap` sandbox in `runtime.mode=session` (see `config.example.yaml:sandbox.bwrap`)
 
 Config scope:
 - `cli-gateway-system@.service` needs a full gateway config (`session`, `agents`, `channels`, auth/2FA as needed).
@@ -57,6 +58,7 @@ Notes:
 - If `cli-gateway.service` (legacy single-instance unit) is present, disable it to avoid token conflicts.
 - CLI agents are invoked locally (`claude` / `codex` / `gemini`) and should use local CLI auth state, not injected API keys.
 - Prepare local auth files under the instance `HOME` (for example: `.codex/auth.json`, `.claude/.credentials.json`, `.gemini/settings.json`) and ensure they are readable by the service user.
+- If `sandbox.bwrap.required=true`, ensure `bwrap` is runnable as the service user (some hosts block unprivileged user namespaces via AppArmor; in that case bwrap will fail open only when `required=false`).
 
 ## Install
 

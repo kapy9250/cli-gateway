@@ -327,6 +327,10 @@ async def main(argv=None):
         if not isinstance(agents_cfg, dict):
             logger.error("❌ Invalid config: agents must be an object")
             sys.exit(1)
+        runtime_mode = str(runtime.get("mode", "session")).strip().lower()
+        sandbox_cfg = config.get("sandbox", {})
+        if not isinstance(sandbox_cfg, dict):
+            sandbox_cfg = {}
 
         channels_cfg = config.get("channels", {})
         if not isinstance(channels_cfg, dict):
@@ -342,7 +346,9 @@ async def main(argv=None):
             agents['claude'] = ClaudeCodeAgent(
                 name='claude',
                 config=claude_cfg,
-                workspace_base=workspace_base
+                workspace_base=workspace_base,
+                runtime_mode=runtime_mode,
+                sandbox_config=sandbox_cfg,
             )
             logger.info("✅ Claude Code agent initialized")
         
@@ -352,7 +358,9 @@ async def main(argv=None):
             agents['codex'] = CodexAgent(
                 name='codex',
                 config=codex_cfg,
-                workspace_base=workspace_base
+                workspace_base=workspace_base,
+                runtime_mode=runtime_mode,
+                sandbox_config=sandbox_cfg,
             )
             logger.info("✅ Codex agent initialized")
         
@@ -362,7 +370,9 @@ async def main(argv=None):
             agents['gemini'] = GeminiAgent(
                 name='gemini',
                 config=gemini_cfg,
-                workspace_base=workspace_base
+                workspace_base=workspace_base,
+                runtime_mode=runtime_mode,
+                sandbox_config=sandbox_cfg,
             )
             logger.info("✅ Gemini agent initialized")
         
