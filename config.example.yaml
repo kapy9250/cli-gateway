@@ -123,6 +123,9 @@ system_ops:
 # 2FA 通过后会签发短时授权票据，由 system service 二次验签后执行。
 system_service:
   enabled: false
+  # Security default: in session mode, model CLI must go through sys-executor (no local fallback).
+  # Set false only for local/dev troubleshooting.
+  require_for_session: true
   socket_path: "/run/cli-gateway/system.sock"
   socket_parent_mode: "0700"
   socket_mode: "0660"

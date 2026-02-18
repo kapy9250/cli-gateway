@@ -128,6 +128,28 @@ class TestSendMessage:
         assert action["instance_id"] == "user-main"
 
     @pytest.mark.asyncio
+    async def test_send_message_fails_closed_when_remote_required_but_unconfigured(self, tmp_path, codex_config):
+        agent = CodexAgent(
+            "codex",
+            codex_config,
+            tmp_path,
+            runtime_mode="session",
+            instance_id="user-main",
+            system_client=None,
+            remote_exec_required=True,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            chunks = []
+            async for chunk in agent.send_message(session.session_id, "test"):
+                chunks.append(chunk)
+
+        text = "".join(chunks)
+        assert "远程执行失败: system_client_required" in text
+        assert not mock_exec.called
+
+    @pytest.mark.asyncio
     async def test_send_message_command_not_found(self, agent):
         session = await agent.create_session("u1", "c1")
         with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()):

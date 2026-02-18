@@ -33,6 +33,7 @@ class ClaudeCodeAgent(BaseAgent):
         instance_id: str = "default",
         sandbox_config: Optional[dict] = None,
         system_client: Optional[object] = None,
+        remote_exec_required: bool = False,
     ):
         super().__init__(
             name=name,
@@ -42,6 +43,7 @@ class ClaudeCodeAgent(BaseAgent):
             instance_id=instance_id,
             sandbox_config=sandbox_config,
             system_client=system_client,
+            remote_exec_required=remote_exec_required,
         )
         # Track running subprocesses per session for cleanup
         self._processes: Dict[str, asyncio.subprocess.Process] = {}

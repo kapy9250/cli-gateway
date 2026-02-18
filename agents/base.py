@@ -66,6 +66,7 @@ class BaseAgent(ABC):
         instance_id: str = "default",
         sandbox_config: Optional[dict] = None,
         system_client: Optional[object] = None,
+        remote_exec_required: bool = False,
     ):
         self.name = name
         self.config = config
@@ -77,6 +78,7 @@ class BaseAgent(ABC):
         self._last_usage: Dict[str, UsageInfo] = {}
         self._processes: Dict[str, Any] = {}  # session_id -> running subprocess
         self.system_client = system_client
+        self.remote_exec_required = bool(remote_exec_required)
         self.command_sandbox = BwrapSandbox(runtime_mode=runtime_mode, sandbox_config=sandbox_config)
     
     @staticmethod
@@ -189,6 +191,8 @@ class BaseAgent(ABC):
     ) -> Optional[Dict[str, object]]:
         """Route CLI invocation through privileged system service when configured."""
         if self.system_client is None:
+            if self.remote_exec_required:
+                return {"ok": False, "reason": "system_client_required"}
             return None
         action = {
             "op": "agent_cli_exec",

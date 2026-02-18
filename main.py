@@ -329,6 +329,14 @@ async def main(argv=None):
             sys.exit(1)
         runtime_mode = str(runtime.get("mode", "session")).strip().lower()
         runtime_instance_id = str(runtime.get("instance_id", "default")).strip() or "default"
+        require_remote_agent_cli_in_session = bool(system_service_conf.get("require_for_session", True))
+        if runtime_mode == "session" and require_remote_agent_cli_in_session and system_client is None:
+            logger.error(
+                "❌ runtime.mode=session requires system_service.enabled=true "
+                "(set system_service.require_for_session=false to override)"
+            )
+            sys.exit(1)
+        remote_exec_required = runtime_mode == "session" and require_remote_agent_cli_in_session
         sandbox_cfg = config.get("sandbox", {})
         if not isinstance(sandbox_cfg, dict):
             sandbox_cfg = {}
@@ -352,6 +360,7 @@ async def main(argv=None):
                 instance_id=runtime_instance_id,
                 sandbox_config=sandbox_cfg,
                 system_client=system_client,
+                remote_exec_required=remote_exec_required,
             )
             logger.info("✅ Claude Code agent initialized")
         
@@ -366,6 +375,7 @@ async def main(argv=None):
                 instance_id=runtime_instance_id,
                 sandbox_config=sandbox_cfg,
                 system_client=system_client,
+                remote_exec_required=remote_exec_required,
             )
             logger.info("✅ Codex agent initialized")
         
@@ -380,6 +390,7 @@ async def main(argv=None):
                 instance_id=runtime_instance_id,
                 sandbox_config=sandbox_cfg,
                 system_client=system_client,
+                remote_exec_required=remote_exec_required,
             )
             logger.info("✅ Gemini agent initialized")
         
