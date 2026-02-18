@@ -610,8 +610,8 @@ class SystemExecutor:
         bwrap_cmd.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
 
         sandbox_workspace = "/workspace"
-        sandbox_home = "/home/cli"
-        sandbox_codex_home = "/home/cli/.codex"
+        sandbox_home = "/sandbox-home"
+        sandbox_codex_home = "/sandbox-home/.codex"
 
         home_raw = str(env.get("HOME", "")).strip()
         codex_raw = str(env.get("CODEX_HOME", "")).strip()

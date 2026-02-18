@@ -148,8 +148,8 @@ def test_agent_cli_exec_bwrap_uses_fixed_mount_points(tmp_path: Path):
 
     joined = " ".join(run_args)
     assert f"--bind {cwd} /workspace" in joined
-    assert "--setenv HOME /home/cli" in joined
-    assert "--setenv CODEX_HOME /home/cli/.codex" in joined
+    assert "--setenv HOME /sandbox-home" in joined
+    assert "--setenv CODEX_HOME /sandbox-home/.codex" in joined
     assert "--chdir /workspace" in joined
 
 
