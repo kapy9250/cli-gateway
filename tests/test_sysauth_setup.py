@@ -138,3 +138,45 @@ async def test_sysauth_setup_start_fallback_contains_otpauth_uri(
     text = fake_channel.last_sent_text() or ""
     assert "otpauth" in text
     assert "二维码发送失败" in text
+
+
+@pytest.mark.asyncio
+async def test_sysauth_approve_usage_keeps_html_escaped_placeholders(
+    session_manager,
+    mock_agent,
+    fake_channel,
+    sample_config,
+    billing,
+    tmp_path,
+):
+    auth = Auth(
+        channel_allowed={"telegram": ["123"]},
+        state_file=str(tmp_path / "auth.json"),
+        system_admin_users=["123"],
+    )
+    two_factor = TwoFactorManager(enabled=True)
+    router = Router(
+        auth=auth,
+        session_manager=session_manager,
+        agents={"claude": mock_agent},
+        channel=fake_channel,
+        config=_system_config(sample_config),
+        billing=billing,
+        two_factor=two_factor,
+    )
+
+    await router.handle_message(
+        IncomingMessage(
+            channel="telegram",
+            chat_id="chat_1",
+            user_id="123",
+            text="/sysauth approve only_challenge_id",
+            is_private=True,
+            is_reply_to_bot=False,
+            is_mention_bot=False,
+        )
+    )
+    text = fake_channel.last_sent_text() or ""
+    assert "用法: /sysauth approve" in text
+    assert "&lt;challenge_id&gt;" in text
+    assert "&lt;totp_code&gt;" in text

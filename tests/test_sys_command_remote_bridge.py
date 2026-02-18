@@ -69,7 +69,10 @@ async def test_sys_journal_requires_2fa_challenge_before_remote_call(
     await router.handle_message(msg)
 
     assert not remote.calls
-    assert "该操作需要 2FA 审批" in (fake_channel.last_sent_text() or "")
+    text = fake_channel.last_sent_text() or ""
+    assert "该操作需要 2FA 审批" in text
+    # Telegram HTML parse mode would eat raw <totp_code>; keep placeholder escaped.
+    assert "&lt;totp_code&gt;" in text
 
 
 @pytest.mark.asyncio

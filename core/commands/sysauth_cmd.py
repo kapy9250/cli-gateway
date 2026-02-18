@@ -23,11 +23,11 @@ def _usage() -> str:
     return "\n".join(
         [
             "用法:",
-            "• /sysauth plan <action text>",
-            "• /sysauth approve <challenge_id> <totp_code>",
-            "• /sysauth status <challenge_id>",
+            "• /sysauth plan &lt;action text&gt;",
+            "• /sysauth approve &lt;challenge_id&gt; &lt;totp_code&gt;",
+            "• /sysauth status &lt;challenge_id&gt;",
             "• /sysauth setup start",
-            "• /sysauth setup verify <totp_code>",
+            "• /sysauth setup verify &lt;totp_code&gt;",
             "• /sysauth setup status",
             "• /sysauth setup cancel",
         ]
@@ -39,7 +39,7 @@ def _setup_usage() -> str:
         [
             "用法:",
             "• /sysauth setup start",
-            "• /sysauth setup verify <totp_code>",
+            "• /sysauth setup verify &lt;totp_code&gt;",
             "• /sysauth setup status",
             "• /sysauth setup cancel",
         ]
@@ -111,7 +111,7 @@ async def _handle_setup(ctx: "Context", manager) -> None:
             f"- expires_in: <code>{expires_in}</code>",
             f"- reused: <code>{str(bool(enrollment.get('reused'))).lower()}</code>",
             f"- secret: <code>{enrollment.get('secret')}</code>",
-            "下一步: /sysauth setup verify <totp_code>",
+            "下一步: /sysauth setup verify &lt;totp_code&gt;",
         ]
         if bool(enrollment.get("already_configured")):
             lines.append("⚠️ 当前用户已有旧绑定，本次 verify 成功后会覆盖旧 secret。")
@@ -125,7 +125,7 @@ async def _handle_setup(ctx: "Context", manager) -> None:
 
     if action == "verify":
         if len(items) < 4:
-            await ctx.router._reply(ctx.message, "用法: /sysauth setup verify <totp_code>")
+            await ctx.router._reply(ctx.message, "用法: /sysauth setup verify &lt;totp_code&gt;")
             return
         code = items[3].strip()
         ok, reason = manager.verify_enrollment(ctx.user_id, code)
@@ -190,7 +190,7 @@ async def handle_sysauth(ctx: "Context") -> None:
 
     if sub == "plan":
         if len(parts) < 3 or not parts[2].strip():
-            await ctx.router._reply(ctx.message, "用法: /sysauth plan <action text>")
+            await ctx.router._reply(ctx.message, "用法: /sysauth plan &lt;action text&gt;")
             return
         action_text = parts[2].strip()
         challenge = manager.create_challenge(
@@ -211,7 +211,7 @@ async def handle_sysauth(ctx: "Context") -> None:
                     f"- challenge_id: <code>{challenge.challenge_id}</code>",
                     f"- ttl_seconds: <code>{ttl}</code>",
                     f"- action_hash: <code>{challenge.action_hash[:16]}...</code>",
-                    "下一步: /sysauth approve <challenge_id> <totp_code>",
+                    "下一步: /sysauth approve &lt;challenge_id&gt; &lt;totp_code&gt;",
                 ]
             ),
         )
@@ -221,7 +221,10 @@ async def handle_sysauth(ctx: "Context") -> None:
         # Re-split because code shouldn't be swallowed by maxsplit=2 format.
         items = text.split()
         if len(items) < 4:
-            await ctx.router._reply(ctx.message, "用法: /sysauth approve <challenge_id> <totp_code>")
+            await ctx.router._reply(
+                ctx.message,
+                "用法: /sysauth approve &lt;challenge_id&gt; &lt;totp_code&gt;",
+            )
             return
         challenge_id = items[2].strip()
         code = items[3].strip()
@@ -235,7 +238,7 @@ async def handle_sysauth(ctx: "Context") -> None:
     if sub == "status":
         items = text.split()
         if len(items) < 3:
-            await ctx.router._reply(ctx.message, "用法: /sysauth status <challenge_id>")
+            await ctx.router._reply(ctx.message, "用法: /sysauth status &lt;challenge_id&gt;")
             return
         challenge_id = items[2].strip()
         st = manager.status(challenge_id, ctx.user_id)

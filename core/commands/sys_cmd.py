@@ -21,16 +21,16 @@ def _usage() -> str:
     return "\n".join(
         [
             "用法:",
-            "• /sys journal [unit] [lines] [--challenge <id>]",
-            "• /sys read <path> [--max-bytes N] [--challenge <id>]",
-            "• /sys cron list [--challenge <id>]",
-            "• /sys cron upsert <name> \"<schedule>\" \"<command>\" [--challenge <id>]",
-            "• /sys cron delete <name> [--challenge <id>]",
-            "• /sys docker <docker args...> [--challenge <id>]",
-            "• /sys config write <path> <base64_content> [--challenge <id>]",
-            "• /sys config append <path> <base64_content> [--challenge <id>]",
-            "• /sys config delete <path> [--challenge <id>]",
-            "• /sys config rollback <path> <backup_path> [--challenge <id>]",
+            "• /sys journal [unit] [lines] [--challenge &lt;id&gt;]",
+            "• /sys read &lt;path&gt; [--max-bytes N] [--challenge &lt;id&gt;]",
+            "• /sys cron list [--challenge &lt;id&gt;]",
+            "• /sys cron upsert &lt;name&gt; \"&lt;schedule&gt;\" \"&lt;command&gt;\" [--challenge &lt;id&gt;]",
+            "• /sys cron delete &lt;name&gt; [--challenge &lt;id&gt;]",
+            "• /sys docker &lt;docker args...&gt; [--challenge &lt;id&gt;]",
+            "• /sys config write &lt;path&gt; &lt;base64_content&gt; [--challenge &lt;id&gt;]",
+            "• /sys config append &lt;path&gt; &lt;base64_content&gt; [--challenge &lt;id&gt;]",
+            "• /sys config delete &lt;path&gt; [--challenge &lt;id&gt;]",
+            "• /sys config rollback &lt;path&gt; &lt;backup_path&gt; [--challenge &lt;id&gt;]",
         ]
     )
 
@@ -106,7 +106,7 @@ async def _require_approval(
                     "🔐 该操作需要 2FA 审批",
                     f"- challenge_id: <code>{challenge.challenge_id}</code>",
                     "下一步:",
-                    f"1) /sysauth approve {challenge.challenge_id} <totp_code>",
+                    f"1) /sysauth approve {challenge.challenge_id} &lt;totp_code&gt;",
                     f"2) {retry_cmd} --challenge {challenge.challenge_id}",
                 ]
             ),
@@ -226,7 +226,10 @@ async def handle_sys(ctx: "Context") -> None:
 
     if sub == "read":
         if len(normalized) < 3:
-            await ctx.router._reply(ctx.message, "用法: /sys read <path> [--max-bytes N] [--challenge <id>]")
+            await ctx.router._reply(
+                ctx.message,
+                "用法: /sys read &lt;path&gt; [--max-bytes N] [--challenge &lt;id&gt;]",
+            )
             return
         path = normalized[2]
         max_bytes = 65536
@@ -311,7 +314,7 @@ async def handle_sys(ctx: "Context") -> None:
             if len(normalized) < 6:
                 await ctx.router._reply(
                     ctx.message,
-                    "用法: /sys cron upsert <name> \"<schedule>\" \"<command>\" [--challenge <id>]",
+                    "用法: /sys cron upsert &lt;name&gt; \"&lt;schedule&gt;\" \"&lt;command&gt;\" [--challenge &lt;id&gt;]",
                 )
                 return
             name = normalized[3]
@@ -345,7 +348,7 @@ async def handle_sys(ctx: "Context") -> None:
             return
         if op == "delete":
             if len(normalized) < 4:
-                await ctx.router._reply(ctx.message, "用法: /sys cron delete <name> [--challenge <id>]")
+                await ctx.router._reply(ctx.message, "用法: /sys cron delete &lt;name&gt; [--challenge &lt;id&gt;]")
                 return
             name = normalized[3]
             action_payload = {"op": "cron_delete", "name": name}
@@ -371,7 +374,10 @@ async def handle_sys(ctx: "Context") -> None:
 
     if sub == "docker":
         if len(normalized) < 3:
-            await ctx.router._reply(ctx.message, "用法: /sys docker <docker args...> [--challenge <id>]")
+            await ctx.router._reply(
+                ctx.message,
+                "用法: /sys docker &lt;docker args...&gt; [--challenge &lt;id&gt;]",
+            )
             return
         docker_args = normalized[2:]
         action_payload = {"op": "docker_exec", "args": docker_args}
@@ -455,7 +461,7 @@ async def handle_sys(ctx: "Context") -> None:
             if len(normalized) < 5:
                 await ctx.router._reply(
                     ctx.message,
-                    "用法: /sys config rollback <path> <backup_path> [--challenge <id>]",
+                    "用法: /sys config rollback &lt;path&gt; &lt;backup_path&gt; [--challenge &lt;id&gt;]",
                 )
                 return
             backup_path = normalized[4]
@@ -491,7 +497,7 @@ async def handle_sys(ctx: "Context") -> None:
         if len(normalized) < 5:
             await ctx.router._reply(
                 ctx.message,
-                "用法: /sys config write|append <path> <base64_content> [--challenge <id>]",
+                "用法: /sys config write|append &lt;path&gt; &lt;base64_content&gt; [--challenge &lt;id&gt;]",
             )
             return
         encoded = normalized[4]
