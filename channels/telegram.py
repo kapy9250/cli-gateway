@@ -102,9 +102,9 @@ class TelegramChannel(BaseChannel):
 
         # Enforce @sender in group chats for clear notification routing
         text = self._apply_required_mention(chat_id, text)
-        
-        # Clean and format
-        text = self.formatter.clean(text)
+
+        # Normalize content for Telegram HTML rendering.
+        text = self.formatter.render_for_channel(text, "telegram")
         
         # Split if needed
         chunks = self.formatter.split_message(text)
@@ -159,7 +159,7 @@ class TelegramChannel(BaseChannel):
                 await self.app.bot.send_document(
                     chat_id=int(chat_id),
                     document=f,
-                    caption=caption if caption else None,
+                    caption=self.formatter.render_for_channel(caption, "telegram") if caption else None,
                     parse_mode=self.parse_mode if caption else None
                 )
         except Exception as e:
@@ -184,8 +184,8 @@ class TelegramChannel(BaseChannel):
             logger.error("Cannot edit message: bot not started")
             return
 
-        # Clean and format
-        text = self.formatter.clean(text)
+        # Normalize content for Telegram HTML rendering.
+        text = self.formatter.render_for_channel(text, "telegram")
 
         # Telegram has a 4096 character limit for edits
         if len(text) > self.max_length:

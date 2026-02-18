@@ -59,6 +59,34 @@ class TestHtmlEscape:
         )
 
 
+class TestChannelRender:
+
+    def test_render_telegram_preserves_safe_tags_and_escapes_placeholders(self, html_formatter):
+        text = "步骤: <b>确认</b> /sysauth approve <challenge_id> <totp_code>"
+        rendered = html_formatter.render_for_channel(text, "telegram")
+        assert "<b>确认</b>" in rendered
+        assert "&lt;challenge_id&gt;" in rendered
+        assert "&lt;totp_code&gt;" in rendered
+
+    def test_render_telegram_normalizes_pre_code_tag_attributes(self, html_formatter):
+        text = '<pre class="x"><code class="language-python">print("ok")</code></pre>'
+        rendered = html_formatter.render_for_channel(text, "telegram")
+        assert rendered == "<pre><code>print(\"ok\")</code></pre>"
+
+    def test_render_discord_converts_html_and_entities(self, md_formatter):
+        text = "<b>bold</b> <code>x</code> &lt;tag&gt;"
+        rendered = md_formatter.render_for_channel(text, "discord")
+        assert "**bold**" in rendered
+        assert "`x`" in rendered
+        assert "<tag>" in rendered
+
+    def test_render_discord_keeps_discord_mentions(self, md_formatter):
+        text = "<b>hi</b> <@123456789>"
+        rendered = md_formatter.render_for_channel(text, "discord")
+        assert "**hi**" in rendered
+        assert "<@123456789>" in rendered
+
+
 class TestSplitMessage:
 
     def test_split_short_message(self, html_formatter):

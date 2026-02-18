@@ -115,8 +115,8 @@ class DiscordChannel(BaseChannel):
         # Enforce @sender in guild channels for clear notification routing
         text = self._apply_required_mention(chat_id, text)
 
-        # Clean and format
-        text = self.formatter.clean(text)
+        # Normalize content for Discord markdown rendering.
+        text = self.formatter.render_for_channel(text, "discord")
 
         # Split if needed
         chunks = self.formatter.split_message(text)
@@ -154,7 +154,8 @@ class DiscordChannel(BaseChannel):
 
         try:
             file = File(filepath)
-            await channel.send(content=caption or None, file=file)
+            content = self.formatter.render_for_channel(caption, "discord") if caption else None
+            await channel.send(content=content, file=file)
         except Exception as e:
             logger.error(f"Failed to send Discord file: {e}")
 
@@ -176,7 +177,7 @@ class DiscordChannel(BaseChannel):
             logger.error(f"Channel {chat_id} not found")
             return
 
-        text = self.formatter.clean(text)
+        text = self.formatter.render_for_channel(text, "discord")
         if len(text) > self.max_length:
             text = text[:self.max_length - 20] + "\n\n[输出过长，已截断]"
 

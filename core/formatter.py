@@ -1,6 +1,7 @@
 """
 Output formatting and cleaning for chat-friendly display
 """
+import html
 import re
 import logging
 from typing import List
@@ -10,6 +11,31 @@ logger = logging.getLogger(__name__)
 
 class OutputFormatter:
     """Clean and format CLI output for messaging platforms"""
+
+    _TELEGRAM_SAFE_TAGS = (
+        "b",
+        "strong",
+        "i",
+        "em",
+        "u",
+        "ins",
+        "s",
+        "strike",
+        "del",
+        "code",
+        "pre",
+        "a",
+        "tg-spoiler",
+    )
+    _TELEGRAM_SAFE_TAG_RE = re.compile(
+        r"</?(?:"
+        + "|".join(_TELEGRAM_SAFE_TAGS)
+        + r")(?:\s+[^>]*)?>",
+        flags=re.IGNORECASE,
+    )
+    _HTML_ENTITY_RE = re.compile(
+        r"&(?:[A-Za-z][A-Za-z0-9]+|#[0-9]+|#x[0-9A-Fa-f]+);"
+    )
     
     def __init__(self, config: dict):
         """
@@ -113,6 +139,19 @@ class OutputFormatter:
                 chunks[i] = re.sub(r'\[(\d+)/\.\.\.\]', f'[{i+1}/{total}]', chunks[i])
         
         return chunks
+
+    def render_for_channel(self, text: str, channel: str) -> str:
+        """Normalize outgoing text for target channel rendering."""
+        cleaned = self.clean(text)
+        target = (channel or "").strip().lower()
+
+        if target == "telegram":
+            if str(self.parse_mode).upper() == "HTML":
+                return self._normalize_telegram_html(cleaned)
+            return cleaned
+        if target == "discord":
+            return self._normalize_discord_markdown(cleaned)
+        return cleaned
     
     def _strip_ansi(self, text: str) -> str:
         """Remove ANSI escape codes"""
@@ -127,6 +166,65 @@ class OutputFormatter:
                 .replace('>', '&gt;')
                 .replace('"', '&quot;')
                 .replace("'", '&#39;'))
+
+    def _normalize_telegram_html(self, text: str) -> str:
+        """Escape unsafe markup while preserving Telegram-supported HTML tags."""
+        normalized = re.sub(r"<\s*pre\b[^>]*>", "<pre>", text, flags=re.IGNORECASE)
+        normalized = re.sub(r"<\s*code\b[^>]*>", "<code>", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"<\s*/\s*pre\b[^>]*>", "</pre>", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"<\s*/\s*code\b[^>]*>", "</code>", normalized, flags=re.IGNORECASE)
+
+        tokens: List[str] = []
+
+        def _stash(match: re.Match[str]) -> str:
+            tokens.append(match.group(0))
+            return f"\x00{len(tokens) - 1}\x00"
+
+        normalized = self._TELEGRAM_SAFE_TAG_RE.sub(_stash, normalized)
+        normalized = self._HTML_ENTITY_RE.sub(_stash, normalized)
+        normalized = normalized.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        def _restore(match: re.Match[str]) -> str:
+            index = int(match.group(1))
+            if 0 <= index < len(tokens):
+                return tokens[index]
+            return match.group(0)
+
+        return re.sub(r"\x00(\d+)\x00", _restore, normalized)
+
+    def _normalize_discord_markdown(self, text: str) -> str:
+        """Convert HTML-style fragments to Discord-friendly markdown."""
+        normalized = text
+
+        normalized = re.sub(r"(?i)<br\s*/?>", "\n", normalized)
+
+        def _replace_pre_code(match: re.Match[str]) -> str:
+            content = html.unescape(match.group(1))
+            fence = "```"
+            if "```" in content:
+                fence = "````"
+            return f"{fence}\n{content}\n{fence}"
+
+        normalized = re.sub(
+            r"(?is)<pre>\s*<code[^>]*>(.*?)</code>\s*</pre>",
+            _replace_pre_code,
+            normalized,
+        )
+
+        def _replace_inline_code(match: re.Match[str]) -> str:
+            content = html.unescape(match.group(1))
+            if "\n" in content:
+                return f"```\n{content}\n```"
+            return f"`{content}`"
+
+        normalized = re.sub(r"(?is)<code[^>]*>(.*?)</code>", _replace_inline_code, normalized)
+        normalized = re.sub(r"(?is)<a\s+[^>]*href=['\"]([^'\"]+)['\"][^>]*>(.*?)</a>", r"\2 (\1)", normalized)
+        normalized = re.sub(r"(?is)<(?:b|strong)>(.*?)</(?:b|strong)>", r"**\1**", normalized)
+        normalized = re.sub(r"(?is)<(?:i|em)>(.*?)</(?:i|em)>", r"*\1*", normalized)
+        normalized = re.sub(r"(?is)<(?:u|ins)>(.*?)</(?:u|ins)>", r"__\1__", normalized)
+        normalized = re.sub(r"(?is)<(?:s|strike|del)>(.*?)</(?:s|strike|del)>", r"~~\1~~", normalized)
+        normalized = re.sub(r"(?is)</?(?:a|b|strong|i|em|u|ins|s|strike|del|tg-spoiler)\b[^>]*>", "", normalized)
+        return html.unescape(normalized)
     
     def _find_split_point(self, text: str, max_pos: int) -> int:
         """
