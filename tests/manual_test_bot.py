@@ -40,14 +40,19 @@ class MockAgent:
         self.workspace_base = workspace_base
         self.sessions = {}
     
-    async def create_session(self, user_id, chat_id):
-        session_id = f"mock_{len(self.sessions)}"
+    async def create_session(self, user_id, chat_id, session_id=None, work_dir=None, scope_dir=None):
+        session_id = str(session_id or f"mock_{len(self.sessions)}")
+        if work_dir is None:
+            base_dir = self.workspace_base / str(scope_dir) if scope_dir else self.workspace_base
+            work_dir = base_dir / f"sess_{session_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
         self.sessions[session_id] = {
             "user_id": user_id,
             "chat_id": chat_id,
-            "created": True
+            "created": True,
+            "work_dir": str(work_dir),
         }
-        return MagicMock(session_id=session_id)
+        return MagicMock(session_id=session_id, work_dir=work_dir)
     
     def get_session_info(self, session_id):
         if session_id in self.sessions:

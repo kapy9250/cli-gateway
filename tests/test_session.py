@@ -175,6 +175,22 @@ class TestPersistence:
         assert s.params == {"k": "v"}
         assert sm2.get_active_session("u1").session_id == "persist1"
 
+    def test_persistence_scope_active_pointer(self, tmp_workspace):
+        sm1 = SessionManager(workspace_base=tmp_workspace)
+        sm1.create_session(
+            "u1",
+            "c1",
+            "claude",
+            session_id="persist_scope",
+            scope_id="telegram:dm:u1",
+            work_dir=str(tmp_workspace / "claude" / "telegram_user_u1" / "sess_persist_scope"),
+        )
+
+        sm2 = SessionManager(workspace_base=tmp_workspace)
+        scoped = sm2.get_active_session_for_scope("telegram:dm:u1")
+        assert scoped is not None
+        assert scoped.session_id == "persist_scope"
+
 
 class TestCleanupInactive:
 
@@ -212,6 +228,7 @@ class TestManagedSessionPostInit:
     def test_params_default_to_empty_dict(self):
         s = ManagedSession(
             session_id="s1", user_id="u1", chat_id="c1",
+            scope_id="u1",
             agent_name="claude", created_at=0.0, last_active=0.0,
         )
         assert s.params == {}

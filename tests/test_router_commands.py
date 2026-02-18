@@ -39,8 +39,21 @@ class TestAgentCommand:
         assert "codex" in text.lower()
         assert "切换" in text or "✅" in text
         current = session_manager.get_active_session("123")
-        assert current is not None
-        assert current.agent_name == "codex"
+        assert current is None
+
+    @pytest.mark.asyncio
+    async def test_agent_switch_keeps_existing_session(
+        self, multi_agent_router, make_message, fake_channel, session_manager
+    ):
+        await multi_agent_router.handle_message(make_message(text="hello"))
+        before = session_manager.get_active_session("123")
+        assert before is not None
+
+        await multi_agent_router.handle_message(make_message(text="/agent codex"))
+        after = session_manager.get_active_session("123")
+        assert after is not None
+        assert after.session_id == before.session_id
+        assert after.agent_name == "codex"
 
     @pytest.mark.asyncio
     async def test_agent_switch_invalid(self, router, make_message, fake_channel):
@@ -145,7 +158,7 @@ class TestModelCommand:
         text = fake_channel.last_sent_text()
         assert "opus" in text
         # Preference should be stored
-        assert router._user_model_pref.get("123") == "opus"
+        assert router._user_model_pref.get("telegram:dm:123") == "opus"
 
     @pytest.mark.asyncio
     async def test_model_invalid(self, router, make_message, fake_channel, session_manager):

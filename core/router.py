@@ -17,6 +17,7 @@ from core.formatter import OutputFormatter
 from core.pipeline import Context, Pipeline
 from core.rules import RulesLoader
 from core.session import SessionManager
+from core.session_scope import build_scope_id, build_scope_workspace_dir
 from utils.constants import MAX_ATTACHMENT_SIZE_BYTES
 
 # Importing commands triggers @command decorators → populates the registry
@@ -67,8 +68,11 @@ class Router:
                 self.default_agent,
             )
 
-        self._user_agent_pref: Dict[str, str] = {}
-        self._user_model_pref: Dict[str, str] = {}
+        self._scope_agent_pref: Dict[str, str] = {}
+        self._scope_model_pref: Dict[str, str] = {}
+        # Backward compatibility for existing call sites/tests.
+        self._user_agent_pref = self._scope_agent_pref
+        self._user_model_pref = self._scope_model_pref
         self._session_locks: Dict[str, asyncio.Lock] = {}
         self._cancel_events: Dict[str, asyncio.Event] = {}  # session_id → cancel signal
 
@@ -145,9 +149,62 @@ class Router:
         """Send a formatted reply, auto-converting markup for the channel."""
         await self.channel.send_text(message.chat_id, self._fmt(message.channel, text))
 
+    def get_scope_id(self, message: IncomingMessage) -> str:
+        """Return scope key for this incoming message."""
+        return build_scope_id(message)
+
+    def get_scope_workspace_dir(self, message: IncomingMessage) -> str:
+        """Return per-scope workspace subdirectory."""
+        return build_scope_workspace_dir(message)
+
+    def _get_scope_agent(self, scope_id: str) -> str:
+        """Return agent preference for scope, fallback to default."""
+        scope_key = str(scope_id)
+        agent_name = self._scope_agent_pref.get(scope_key)
+        if agent_name:
+            return agent_name
+        dm_user = self._extract_dm_user(scope_key)
+        if dm_user:
+            legacy = self._scope_agent_pref.get(dm_user)
+            if legacy:
+                return legacy
+        return self.default_agent
+
+    def _set_scope_agent(self, scope_id: str, agent_name: str) -> None:
+        self._scope_agent_pref[str(scope_id)] = str(agent_name)
+
+    def _get_scope_model_pref(self, scope_id: str) -> Optional[str]:
+        scope_key = str(scope_id)
+        model = self._scope_model_pref.get(scope_key)
+        if model is not None:
+            return model
+        dm_user = self._extract_dm_user(scope_key)
+        if dm_user:
+            return self._scope_model_pref.get(dm_user)
+        return None
+
+    def _set_scope_model_pref(self, scope_id: str, model: str) -> None:
+        self._scope_model_pref[str(scope_id)] = str(model)
+
+    def _pop_scope_model_pref(self, scope_id: str) -> Optional[str]:
+        scope_key = str(scope_id)
+        if scope_key in self._scope_model_pref:
+            return self._scope_model_pref.pop(scope_key, None)
+        dm_user = self._extract_dm_user(scope_key)
+        if dm_user:
+            return self._scope_model_pref.pop(dm_user, None)
+        return None
+
+    @staticmethod
+    def _extract_dm_user(scope_id: str) -> Optional[str]:
+        parts = str(scope_id).split(":", 2)
+        if len(parts) == 3 and parts[1] == "dm":
+            return parts[2]
+        return None
+
     def _get_user_agent(self, user_id: str) -> str:
-        """Return the user's preferred agent name, falling back to global default."""
-        return self._user_agent_pref.get(str(user_id), self.default_agent)
+        """Legacy helper: treats user_id as preference key."""
+        return self._get_scope_agent(str(user_id))
 
     def get_session_lock(self, session_id: str) -> asyncio.Lock:
         """Get or create a per-session lock."""

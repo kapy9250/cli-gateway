@@ -19,6 +19,23 @@ class TestAutoCreateSession:
         active = session_manager.get_active_session("123")
         assert active.params == {"thinking": "low"}  # from default_params
 
+    @pytest.mark.asyncio
+    async def test_scope_workspace_partition(self, router, make_message, fake_channel, session_manager):
+        await router.handle_message(make_message(text="dm hello", chat_id="dm-1", is_private=True))
+        dm_scope = "telegram:dm:123"
+        dm_session = session_manager.get_active_session_for_scope(dm_scope)
+        assert dm_session is not None
+        assert dm_session.work_dir is not None
+        assert "telegram_user_123" in dm_session.work_dir
+
+        await router.handle_message(make_message(text="group hello", chat_id="12345", is_private=False))
+        group_scope = "telegram:chat:12345"
+        group_session = session_manager.get_active_session_for_scope(group_scope)
+        assert group_session is not None
+        assert group_session.work_dir is not None
+        assert "telegram_12345" in group_session.work_dir
+        assert group_session.session_id != dm_session.session_id
+
 
 class TestModelPreference:
 
@@ -53,7 +70,7 @@ class TestRecoverStaleSession:
         await router.handle_message(make_message(text="second"))
         new_active = session_manager.get_active_session("123")
         assert new_active is not None
-        assert new_active.session_id != old_sid  # New session created
+        assert new_active.session_id == old_sid  # Session ID preserved
         assert new_active.model == "opus"  # Preserved
         assert new_active.params.get("thinking") == "high"  # Preserved
 

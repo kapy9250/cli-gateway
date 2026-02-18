@@ -27,25 +27,40 @@ class StreamingCliAgent(BaseAgent):
 
     agent_label: str = "CLI"  # Override in subclass for log messages
 
-    async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:
-        """Create new session with standard workspace structure."""
-        session_id = str(uuid.uuid4())
+    async def create_session(
+        self,
+        user_id: str,
+        chat_id: str,
+        session_id: Optional[str] = None,
+        work_dir: Optional[Path] = None,
+        scope_dir: Optional[str] = None,
+    ) -> SessionInfo:
+        """Create or reattach a session with standard workspace structure."""
+        sid = str(session_id or str(uuid.uuid4()))
+        existing = self.sessions.get(sid)
+        if existing is not None:
+            existing.last_active = time.time()
+            return existing
 
-        work_dir = self.workspace_base / f"sess_{session_id}"
+        if work_dir is None:
+            base_dir = self.workspace_base / str(scope_dir) if scope_dir else self.workspace_base
+            work_dir = base_dir / f"sess_{sid}"
+        else:
+            work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         self.init_workspace(work_dir)
 
         session = SessionInfo(
-            session_id=session_id,
+            session_id=sid,
             agent_name=self.name,
-            user_id=user_id,
+            user_id=str(user_id),
             work_dir=work_dir,
             created_at=time.time(),
             last_active=time.time()
         )
 
-        self.sessions[session_id] = session
-        logger.info(f"Created {self.agent_label} session {session_id} at {work_dir}")
+        self.sessions[sid] = session
+        logger.info(f"Created {self.agent_label} session {sid} at {work_dir}")
         return session
 
     async def send_message(self, session_id: str, message: str, model: str = None, params: dict = None) -> AsyncIterator[str]:

@@ -16,11 +16,12 @@ logger = logging.getLogger(__name__)
 
 @command("/sessions", "列出所有会话")
 async def handle_sessions(ctx: "Context") -> None:
-    sessions = ctx.session_manager.list_user_sessions(ctx.message.user_id)
+    scope_id = ctx.router.get_scope_id(ctx.message)
+    sessions = ctx.session_manager.list_scope_sessions(scope_id)
     if not sessions:
         await ctx.router._reply(ctx.message, "暂无会话")
         return
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     lines = ["你的会话："]
     for item in sessions:
         marker = "⭐" if current and current.session_id == item.session_id else "-"
@@ -31,7 +32,8 @@ async def handle_sessions(ctx: "Context") -> None:
 
 @command("/current", "查看当前会话")
 async def handle_current(ctx: "Context") -> None:
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    scope_id = ctx.router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     if not current:
         await ctx.router._reply(ctx.message, "当前无活跃会话")
         return
@@ -44,11 +46,12 @@ async def handle_current(ctx: "Context") -> None:
 @command("/switch", "切换到指定会话")
 async def handle_switch(ctx: "Context") -> None:
     parts = (ctx.message.text or "").strip().split()
+    scope_id = ctx.router.get_scope_id(ctx.message)
     if len(parts) < 2:
         await ctx.router._reply(ctx.message, "用法: /switch <session_id>")
         return
     session_id = parts[1].strip()
-    if not ctx.session_manager.switch_session(ctx.message.user_id, session_id):
+    if not ctx.session_manager.switch_session_for_scope(scope_id, session_id):
         await ctx.router._reply(ctx.message, "❌ 会话不存在或无权限")
         return
     await ctx.router._reply(ctx.message, f"✅ 已切换到会话 {session_id}")
@@ -56,7 +59,8 @@ async def handle_switch(ctx: "Context") -> None:
 
 @command("/kill", "销毁当前会话")
 async def handle_kill(ctx: "Context") -> None:
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    scope_id = ctx.router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     if not current:
         await ctx.router._reply(ctx.message, "当前无活跃会话")
         return
@@ -77,7 +81,8 @@ async def handle_kill(ctx: "Context") -> None:
 
 @command("/name", "为当前会话命名")
 async def handle_name(ctx: "Context") -> None:
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    scope_id = ctx.router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     if not current:
         await ctx.router._reply(ctx.message, "❌ 当前无活跃会话")
         return

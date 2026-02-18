@@ -8,7 +8,7 @@ from agents.base import BaseAgent, SessionInfo, UsageInfo
 
 # Concrete subclass for testing non-abstract methods
 class ConcreteAgent(BaseAgent):
-    async def create_session(self, user_id, chat_id):
+    async def create_session(self, user_id, chat_id, session_id=None, work_dir=None, scope_dir=None):
         pass
 
     async def send_message(self, session_id, message):

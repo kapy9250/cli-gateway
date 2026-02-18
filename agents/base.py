@@ -208,7 +208,14 @@ class BaseAgent(ABC):
         return await self.system_client.execute(str(session.user_id), action)
 
     @abstractmethod
-    async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:
+    async def create_session(
+        self,
+        user_id: str,
+        chat_id: str,
+        session_id: Optional[str] = None,
+        work_dir: Optional[Path] = None,
+        scope_dir: Optional[str] = None,
+    ) -> SessionInfo:
         """
         Create a new session
         

@@ -25,15 +25,21 @@ class MockAgentForIntegration:
         self.workspace_base = workspace_base
         self.sessions = {}
     
-    async def create_session(self, user_id, chat_id):
-        session_id = f"mock_{self.name}_{len(self.sessions)}"
+    async def create_session(self, user_id, chat_id, session_id=None, work_dir=None, scope_dir=None):
+        session_id = str(session_id or f"mock_{self.name}_{len(self.sessions)}")
+        if work_dir is None:
+            base_dir = self.workspace_base / str(scope_dir) if scope_dir else self.workspace_base
+            work_dir = base_dir / f"sess_{session_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
         self.sessions[session_id] = {
             "user_id": user_id,
             "chat_id": chat_id,
-            "agent_name": self.name
+            "agent_name": self.name,
+            "work_dir": str(work_dir),
         }
         session_info = MagicMock()
         session_info.session_id = session_id
+        session_info.work_dir = work_dir
         return session_info
     
     def get_session_info(self, session_id):

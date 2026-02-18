@@ -13,7 +13,8 @@ if TYPE_CHECKING:
 @command("/files", "列出当前会话输出文件")
 async def handle_files(ctx: "Context") -> None:
     router = ctx.router
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    scope_id = router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     if not current:
         await router._reply(ctx.message, "❌ 当前无活跃会话")
         return
@@ -40,7 +41,8 @@ async def handle_files(ctx: "Context") -> None:
 async def handle_download(ctx: "Context") -> None:
     router = ctx.router
     parts = (ctx.message.text or "").strip().split()
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    scope_id = router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     if not current:
         await router._reply(ctx.message, "❌ 当前无活跃会话")
         return

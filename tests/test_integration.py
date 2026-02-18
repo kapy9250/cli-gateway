@@ -36,14 +36,16 @@ class TestMultiAgentSwitch:
         await r.handle_message(make_message(text="hello claude"))
         active = session_manager.get_active_session("123")
         assert active.agent_name == "claude"
+        original_sid = active.session_id
 
         # Switch to codex
         await r.handle_message(make_message(text="/agent codex"))
 
-        # Send message → creates codex session
+        # Send message → keep same session but route to codex
         await r.handle_message(make_message(text="hello codex"))
         active = session_manager.get_active_session("123")
         assert active.agent_name == "codex"
+        assert active.session_id == original_sid
 
 
 class TestParameterIsolation:
@@ -64,8 +66,9 @@ class TestParameterIsolation:
         await r.handle_message(make_message(text="hello codex"))
 
         codex_session = session_manager.get_active_session("123")
-        # Codex session should not have claude's params
-        assert codex_session.params.get("thinking") is None or codex_session.agent_name == "codex"
+        assert codex_session.agent_name == "codex"
+        # Cross-agent unsupported params should be reset.
+        assert codex_session.params.get("thinking") is None
 
 
 class TestModelPreferenceApplied:

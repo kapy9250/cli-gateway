@@ -45,6 +45,7 @@ class TestManagedSessionNameField:
     def test_name_default_none(self):
         s = ManagedSession(
             session_id="s1", user_id="u1", chat_id="c1",
+            scope_id="u1",
             agent_name="claude", created_at=0.0, last_active=0.0,
         )
         assert s.name is None
@@ -52,6 +53,7 @@ class TestManagedSessionNameField:
     def test_name_set(self):
         s = ManagedSession(
             session_id="s1", user_id="u1", chat_id="c1",
+            scope_id="u1",
             agent_name="claude", created_at=0.0, last_active=0.0,
             name="my-project",
         )

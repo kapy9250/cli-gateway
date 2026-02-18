@@ -75,7 +75,8 @@ async def handle_help(ctx: "Context") -> None:
 
 @command("/history", "查看对话历史")
 async def handle_history(ctx: "Context") -> None:
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    scope_id = ctx.router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     if not current:
         await ctx.router._reply(ctx.message, "❌ 当前无活跃会话")
         return
@@ -93,7 +94,8 @@ async def handle_history(ctx: "Context") -> None:
 
 @command("/cancel", "取消当前执行")
 async def handle_cancel(ctx: "Context") -> None:
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    scope_id = ctx.router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     if not current:
         await ctx.router._reply(ctx.message, "❌ 当前无活跃会话")
         return

@@ -14,8 +14,9 @@ if TYPE_CHECKING:
 async def handle_model(ctx: "Context") -> None:
     parts = (ctx.message.text or "").strip().split()
     router = ctx.router
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
-    active_agent_name = current.agent_name if current else router._get_user_agent(ctx.message.user_id)
+    scope_id = router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
+    active_agent_name = current.agent_name if current else router._get_scope_agent(scope_id)
     agent_config = ctx.config["agents"].get(active_agent_name, {})
     models = agent_config.get("models", {})
 
@@ -43,7 +44,7 @@ async def handle_model(ctx: "Context") -> None:
         ctx.session_manager.update_model(current.session_id, model_alias)
         await router._reply(ctx.message, f"✅ 已切换模型: {model_alias} ({models[model_alias]})")
     else:
-        router._user_model_pref[str(ctx.message.user_id)] = model_alias
+        router._set_scope_model_pref(scope_id, model_alias)
         await router._reply(
             ctx.message,
             f"✅ 已设置模型偏好: {model_alias} ({models[model_alias]})，下次会话生效",
@@ -54,7 +55,8 @@ async def handle_model(ctx: "Context") -> None:
 async def handle_param(ctx: "Context") -> None:
     parts = (ctx.message.text or "").strip().split()
     router = ctx.router
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    scope_id = router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     if not current:
         await router._reply(ctx.message, "❌ 当前无活跃会话")
         return
@@ -96,7 +98,8 @@ async def handle_param(ctx: "Context") -> None:
 @command("/params", "查看当前配置")
 async def handle_params(ctx: "Context") -> None:
     router = ctx.router
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    scope_id = router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     if not current:
         await router._reply(ctx.message, "❌ 当前无活跃会话")
         return
@@ -128,7 +131,8 @@ async def handle_params(ctx: "Context") -> None:
 @command("/reset", "重置为默认配置")
 async def handle_reset(ctx: "Context") -> None:
     router = ctx.router
-    current = ctx.session_manager.get_active_session(ctx.message.user_id)
+    scope_id = router.get_scope_id(ctx.message)
+    current = ctx.session_manager.get_active_session_for_scope(scope_id)
     if not current:
         await router._reply(ctx.message, "❌ 当前无活跃会话")
         return

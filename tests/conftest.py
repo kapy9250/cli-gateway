@@ -85,15 +85,31 @@ class MockAgent(BaseAgent):
     def set_response(self, chunks: List[str]):
         self._response_chunks = chunks
 
-    async def create_session(self, user_id: str, chat_id: str) -> SessionInfo:
-        sid = f"mock-{len(self.created_sessions):04d}"
-        work_dir = self.workspace_base / f"sess_{sid}"
+    async def create_session(
+        self,
+        user_id: str,
+        chat_id: str,
+        session_id: str = None,
+        work_dir: Path = None,
+        scope_dir: str = None,
+    ) -> SessionInfo:
+        sid = str(session_id or f"mock-{len(self.created_sessions):04d}")
+        existing = self.sessions.get(sid)
+        if existing is not None:
+            existing.last_active = time.time()
+            return existing
+
+        if work_dir is None:
+            base_dir = self.workspace_base / str(scope_dir) if scope_dir else self.workspace_base
+            work_dir = base_dir / f"sess_{sid}"
+        else:
+            work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         self.init_workspace(work_dir)
         session = SessionInfo(
             session_id=sid,
             agent_name=self.name,
-            user_id=user_id,
+            user_id=str(user_id),
             work_dir=work_dir,
             created_at=time.time(),
             last_active=time.time(),
