@@ -318,6 +318,10 @@ class SystemExecutor:
         text = str(value or "")
         return ("\n" in text) or ("\r" in text) or ("\x00" in text)
 
+    @staticmethod
+    def _contains_nul(value: str) -> bool:
+        return "\x00" in str(value or "")
+
     @classmethod
     def _validate_cron_schedule(cls, schedule: str) -> bool:
         text = str(schedule or "").strip()
@@ -708,7 +712,8 @@ class SystemExecutor:
         if len(raw_args) > self.agent_cli_max_args:
             return None, "args_too_many"
         args = [str(v) for v in raw_args]
-        if any(self._contains_line_break_or_nul(a) for a in args):
+        # CLI prompts are often multiline; only reject NUL bytes.
+        if any(self._contains_nul(a) for a in args):
             return None, "args_invalid"
 
         cwd_raw = str(action.get("cwd", "")).strip()

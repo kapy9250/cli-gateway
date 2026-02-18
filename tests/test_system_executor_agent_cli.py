@@ -192,3 +192,37 @@ def test_agent_cli_exec_root_requires_setpriv_for_uid_drop(tmp_path: Path):
 
     assert result["ok"] is False
     assert result["reason"] == "setpriv_not_found"
+
+
+def test_agent_cli_exec_allows_multiline_args(tmp_path: Path):
+    cfg = _base_config(tmp_path)
+    executor = SystemExecutor(cfg)
+    cwd = tmp_path / "workspaces" / "user-main" / "codex" / "sess_1"
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    action = {
+        "op": "agent_cli_exec",
+        "agent": "codex",
+        "mode": "session",
+        "instance_id": "user-main",
+        "command": "codex",
+        "args": ["exec", "line1\nline2"],
+        "cwd": str(cwd),
+        "env": {},
+        "timeout_seconds": 30,
+    }
+    completed = Mock(returncode=0, stdout="ok", stderr="")
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/codex"),
+        patch("subprocess.run", return_value=completed) as run_mock,
+    ):
+        result = executor.agent_cli_exec(
+            action,
+            peer_uid=999,
+            peer_units={"cli-gateway-session@user-main.service"},
+        )
+
+    assert result["ok"] is True
+    run_args = run_mock.call_args[0][0]
+    assert run_args[2] == "line1\nline2"
