@@ -615,10 +615,16 @@ class SystemExecutor:
         bwrap_cmd.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
 
         writable_paths: List[Path] = [cwd.resolve(strict=False)]
-        for key in ("HOME", "CODEX_HOME"):
-            value = env.get(key)
-            if value:
-                writable_paths.append(Path(value).resolve(strict=False))
+        home_path = None
+        home_raw = env.get("HOME")
+        if home_raw:
+            home_path = Path(home_raw).resolve(strict=False)
+            writable_paths.append(home_path)
+        codex_raw = env.get("CODEX_HOME")
+        if codex_raw:
+            codex_path = Path(codex_raw).resolve(strict=False)
+            if home_path is None or not self._is_under(home_path, codex_path):
+                writable_paths.append(codex_path)
 
         deduped: List[Path] = []
         seen = set()
