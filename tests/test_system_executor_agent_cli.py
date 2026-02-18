@@ -106,3 +106,89 @@ def test_agent_cli_exec_rejects_cwd_outside_instance_workspace(tmp_path: Path):
         )
     assert result["ok"] is False
     assert result["reason"] == "cwd_not_in_workspace"
+
+
+def test_agent_cli_exec_bwrap_uses_fixed_mount_points(tmp_path: Path):
+    cfg = _base_config(tmp_path)
+    cfg["agent_cli"]["bwrap"] = {"enabled": True, "required": True}
+    executor = SystemExecutor(cfg)
+    cwd = tmp_path / "workspaces" / "user-main" / "codex" / "sess_1"
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    action = {
+        "op": "agent_cli_exec",
+        "agent": "codex",
+        "mode": "session",
+        "instance_id": "user-main",
+        "command": "codex",
+        "args": ["exec", "hello"],
+        "cwd": str(cwd),
+        "env": {"FOO": "bar"},
+        "timeout_seconds": 30,
+    }
+    completed = Mock(returncode=0, stdout="ok", stderr="")
+
+    with (
+        patch("os.geteuid", return_value=1000),
+        patch("os.getegid", return_value=1000),
+        patch("shutil.which", return_value="/usr/bin/codex"),
+        patch("subprocess.run", return_value=completed) as run_mock,
+    ):
+        result = executor.agent_cli_exec(
+            action,
+            peer_uid=999,
+            peer_units={"cli-gateway-session@user-main.service"},
+        )
+
+    assert result["ok"] is True
+    run_args = run_mock.call_args[0][0]
+    assert run_args[0] == "bwrap"
+    assert "--uid" not in run_args
+    assert "--gid" not in run_args
+
+    joined = " ".join(run_args)
+    assert f"--bind {cwd} /workspace" in joined
+    assert "--setenv HOME /home/cli" in joined
+    assert "--setenv CODEX_HOME /home/cli/.codex" in joined
+    assert "--chdir /workspace" in joined
+
+
+def test_agent_cli_exec_root_requires_setpriv_for_uid_drop(tmp_path: Path):
+    cfg = _base_config(tmp_path)
+    cfg["agent_cli"]["bwrap"] = {"enabled": False, "required": False}
+    executor = SystemExecutor(cfg)
+    cwd = tmp_path / "workspaces" / "user-main" / "codex" / "sess_1"
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    action = {
+        "op": "agent_cli_exec",
+        "agent": "codex",
+        "mode": "session",
+        "instance_id": "user-main",
+        "command": "codex",
+        "args": ["exec", "hello"],
+        "cwd": str(cwd),
+        "env": {},
+        "timeout_seconds": 30,
+    }
+
+    def _which(name: str) -> str | None:
+        if name == "codex":
+            return "/usr/bin/codex"
+        if name == "setpriv":
+            return None
+        return None
+
+    with (
+        patch("os.geteuid", return_value=0),
+        patch("os.getegid", return_value=0),
+        patch("shutil.which", side_effect=_which),
+    ):
+        result = executor.agent_cli_exec(
+            action,
+            peer_uid=0,
+            peer_units={"cli-gateway-session@user-main.service"},
+        )
+
+    assert result["ok"] is False
+    assert result["reason"] == "setpriv_not_found"

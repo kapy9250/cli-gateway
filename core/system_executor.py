@@ -117,6 +117,7 @@ class SystemExecutor:
         self.agent_cli_bwrap_required = bool(bwrap_cfg.get("required", True))
         self.agent_cli_bwrap_command = str(bwrap_cfg.get("command", "bwrap")).strip() or "bwrap"
         self.agent_cli_bwrap_unshare_all = bool(bwrap_cfg.get("unshare_all", True))
+        self.agent_cli_bwrap_unshare_user = bool(bwrap_cfg.get("unshare_user", False))
         self.agent_cli_bwrap_share_network = bool(bwrap_cfg.get("share_network", True))
         self.agent_cli_bwrap_readonly_paths = [
             str(v)
@@ -131,8 +132,6 @@ class SystemExecutor:
                     "/etc",
                     "/run",
                     "/opt",
-                    "/data",
-                    "/var",
                 ],
             )
         ]
@@ -142,7 +141,6 @@ class SystemExecutor:
                 "mask_dirs",
                 [
                     "/root",
-                    "/home",
                     "/etc/cron.d",
                     "/etc/cron.daily",
                     "/etc/cron.hourly",
@@ -592,20 +590,17 @@ class SystemExecutor:
     def _build_agent_bwrap_command(
         self,
         *,
-        command: str,
-        args: List[str],
+        exec_argv: List[str],
         cwd: Path,
         env: Dict[str, str],
     ) -> List[str]:
         bwrap_cmd = [self.agent_cli_bwrap_command, "--die-with-parent", "--new-session"]
         if self.agent_cli_bwrap_unshare_all:
-            bwrap_cmd.append("--unshare-all")
-        if self.agent_cli_bwrap_share_network:
-            bwrap_cmd.append("--share-net")
-        if self.agent_cli_run_uid is not None:
-            bwrap_cmd.extend(["--uid", str(self.agent_cli_run_uid)])
-        if self.agent_cli_run_gid is not None:
-            bwrap_cmd.extend(["--gid", str(self.agent_cli_run_gid)])
+            bwrap_cmd.extend(["--unshare-ipc", "--unshare-pid", "--unshare-uts"])
+            if self.agent_cli_bwrap_unshare_user:
+                bwrap_cmd.append("--unshare-user")
+        if not self.agent_cli_bwrap_share_network:
+            bwrap_cmd.append("--unshare-net")
 
         for path in self.agent_cli_bwrap_readonly_paths:
             p = str(path).strip()
@@ -614,28 +609,19 @@ class SystemExecutor:
 
         bwrap_cmd.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
 
-        writable_paths: List[Path] = [cwd.resolve(strict=False)]
-        home_path = None
-        home_raw = env.get("HOME")
-        if home_raw:
-            home_path = Path(home_raw).resolve(strict=False)
-            writable_paths.append(home_path)
-        codex_raw = env.get("CODEX_HOME")
-        if codex_raw:
-            codex_path = Path(codex_raw).resolve(strict=False)
-            if home_path is None or not self._is_under(home_path, codex_path):
-                writable_paths.append(codex_path)
+        sandbox_workspace = "/workspace"
+        sandbox_home = "/home/cli"
+        sandbox_codex_home = "/home/cli/.codex"
 
-        deduped: List[Path] = []
-        seen = set()
-        for p in writable_paths:
-            key = str(p)
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(p)
-        for path in deduped:
-            bwrap_cmd.extend(["--bind", str(path), str(path)])
+        home_raw = str(env.get("HOME", "")).strip()
+        codex_raw = str(env.get("CODEX_HOME", "")).strip()
+        home_path = Path(home_raw).resolve(strict=False) if home_raw else None
+        codex_path = Path(codex_raw).resolve(strict=False) if codex_raw else None
+        bwrap_cmd.extend(["--bind", str(cwd), sandbox_workspace])
+        if home_path is not None:
+            bwrap_cmd.extend(["--bind", str(home_path), sandbox_home])
+        if codex_path is not None and (home_path is None or not self._is_under(home_path, codex_path)):
+            bwrap_cmd.extend(["--bind", str(codex_path), sandbox_codex_home])
 
         for path in self.agent_cli_bwrap_mask_dirs:
             p = str(path).strip()
@@ -646,8 +632,39 @@ class SystemExecutor:
             if p:
                 bwrap_cmd.extend(["--ro-bind-try", "/dev/null", p])
 
-        bwrap_cmd.extend(["--chdir", str(cwd), "--", command, *args])
+        bwrap_cmd.extend(["--setenv", "PATH", self.agent_cli_path])
+        bwrap_cmd.extend(["--setenv", "TMPDIR", "/tmp"])
+        bwrap_cmd.extend(["--setenv", "HOME", sandbox_home])
+        bwrap_cmd.extend(["--setenv", "CODEX_HOME", sandbox_codex_home])
+
+        for key, value in env.items():
+            if key in {"PATH", "TMPDIR", "HOME", "CODEX_HOME"}:
+                continue
+            bwrap_cmd.extend(["--setenv", str(key), str(value)])
+
+        bwrap_cmd.extend(["--chdir", sandbox_workspace, "--", *exec_argv])
         return bwrap_cmd
+
+    def _build_agent_exec_argv(self, *, command: str, args: List[str]) -> Tuple[Optional[List[str]], Optional[str]]:
+        exec_argv = [command, *args]
+        run_uid = self.agent_cli_run_uid
+        run_gid = self.agent_cli_run_gid
+        should_drop_uid = run_uid is not None and int(run_uid) != os.geteuid()
+        should_drop_gid = run_gid is not None and int(run_gid) != os.getegid()
+        if os.geteuid() != 0 or (not should_drop_uid and not should_drop_gid):
+            return exec_argv, None
+
+        setpriv_cmd = shutil.which("setpriv")
+        if not setpriv_cmd:
+            return None, "setpriv_not_found"
+
+        prefix = [setpriv_cmd]
+        if should_drop_gid and run_gid is not None:
+            prefix.extend(["--regid", str(run_gid), "--clear-groups"])
+        if should_drop_uid and run_uid is not None:
+            prefix.extend(["--reuid", str(run_uid)])
+        prefix.append("--")
+        return [*prefix, *exec_argv], None
 
     def _normalize_agent_exec_request(
         self,
@@ -760,11 +777,15 @@ class SystemExecutor:
         except Exception as e:
             return {"ok": False, "reason": f"agent_cli_home_setup_failed:{e}"}
 
-        run_cmd = [command, *args]
+        exec_argv, exec_error = self._build_agent_exec_argv(command=command, args=args)
+        if exec_error:
+            return {"ok": False, "reason": exec_error}
+        assert exec_argv is not None
+
+        run_cmd = exec_argv
         if self.agent_cli_bwrap_enabled:
             run_cmd = self._build_agent_bwrap_command(
-                command=command,
-                args=args,
+                exec_argv=exec_argv,
                 cwd=cwd,
                 env=env,
             )

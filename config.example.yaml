@@ -101,6 +101,7 @@ system_ops:
       required: true
       command: "bwrap"
       unshare_all: true
+      unshare_user: false
       share_network: true
 
 # ──────────── Privileged System Service Bridge ────────────
