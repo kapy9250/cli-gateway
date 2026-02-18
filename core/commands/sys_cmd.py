@@ -21,16 +21,21 @@ def _usage() -> str:
     return "\n".join(
         [
             "用法:",
-            "• /sys journal [unit] [lines] [--challenge &lt;id&gt;]",
-            "• /sys read &lt;path&gt; [--max-bytes N] [--challenge &lt;id&gt;]",
-            "• /sys cron list [--challenge &lt;id&gt;]",
-            "• /sys cron upsert &lt;name&gt; \"&lt;schedule&gt;\" \"&lt;command&gt;\" [--challenge &lt;id&gt;]",
-            "• /sys cron delete &lt;name&gt; [--challenge &lt;id&gt;]",
-            "• /sys docker &lt;docker args...&gt; [--challenge &lt;id&gt;]",
-            "• /sys config write &lt;path&gt; &lt;base64_content&gt; [--challenge &lt;id&gt;]",
-            "• /sys config append &lt;path&gt; &lt;base64_content&gt; [--challenge &lt;id&gt;]",
-            "• /sys config delete &lt;path&gt; [--challenge &lt;id&gt;]",
-            "• /sys config rollback &lt;path&gt; &lt;backup_path&gt; [--challenge &lt;id&gt;]",
+            "• /sys journal [unit] [lines]",
+            "• /sys read &lt;path&gt; [--max-bytes N]",
+            "• /sys cron list",
+            "• /sys cron upsert &lt;name&gt; \"&lt;schedule&gt;\" \"&lt;command&gt;\"",
+            "• /sys cron delete &lt;name&gt;",
+            "• /sys docker &lt;docker args...&gt;",
+            "• /sys config write &lt;path&gt; &lt;base64_content&gt;",
+            "• /sys config append &lt;path&gt; &lt;base64_content&gt;",
+            "• /sys config delete &lt;path&gt;",
+            "• /sys config rollback &lt;path&gt; &lt;backup_path&gt;",
+            "",
+            "说明:",
+            "• 首次敏感操作会触发 2FA，直接回复 6 位验证码即可",
+            "• 验证通过后同一聊天 10 分钟内免挑战（不区分操作类型）",
+            "• 高级兼容: 仍支持 --challenge &lt;id&gt;",
         ]
     )
 
@@ -97,9 +102,26 @@ async def _require_approval(
         )
         return None
 
+    window = manager.get_approval_window(
+        ctx.user_id,
+        ctx.message.channel,
+        ctx.message.chat_id,
+    )
+    if not challenge_id and window is not None:
+        grant = getattr(ctx, "system_grant", None)
+        if grant is None:
+            await ctx.router._reply(ctx.message, "❌ system grant signer 不可用")
+            return None
+        try:
+            return grant.issue(ctx.user_id, action_payload)
+        except Exception as e:
+            await ctx.router._reply(ctx.message, f"❌ 生成系统授权票据失败: <code>{e}</code>")
+            return None
+
     if not challenge_id:
         challenge = manager.create_challenge(ctx.user_id, action_payload)
         manager.set_pending_approval_input(ctx.user_id, challenge.challenge_id, retry_cmd)
+        ttl_seconds = int(max(0, float(getattr(manager, "approval_grace_seconds", 600))))
         await ctx.router._reply(
             ctx.message,
             "\n".join(
@@ -108,6 +130,7 @@ async def _require_approval(
                     f"- challenge_id: <code>{challenge.challenge_id}</code>",
                     "请直接回复 6 位验证码。",
                     "若下一条消息不是验证码，将判定失败并结束本次验证。",
+                    f"通过后本聊天 <code>{ttl_seconds}</code> 秒内免挑战。",
                 ]
             ),
         )

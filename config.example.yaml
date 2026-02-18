@@ -43,6 +43,8 @@ auth:
 two_factor:
   enabled: false
   ttl_seconds: 300
+  # After one successful 2FA in same channel/chat, skip challenge for this many seconds.
+  approval_grace_seconds: 600
   enrollment_ttl_seconds: 600
   valid_window: 1
   period_seconds: 30

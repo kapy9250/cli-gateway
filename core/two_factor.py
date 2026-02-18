@@ -50,6 +50,15 @@ class PendingApprovalInput:
     expires_at: float
 
 
+@dataclass
+class ApprovalWindow:
+    user_id: str
+    channel: str
+    chat_id: str
+    created_at: float
+    expires_at: float
+
+
 class TwoFactorManager:
     def __init__(
         self,
@@ -62,6 +71,7 @@ class TwoFactorManager:
         state_file: Optional[str] = None,
         enrollment_ttl_seconds: int = 600,
         issuer: str = "CLI Gateway",
+        approval_grace_seconds: int = 600,
     ):
         self.enabled = bool(enabled)
         self.ttl_seconds = int(ttl_seconds)
@@ -76,9 +86,11 @@ class TwoFactorManager:
         self.state_file = Path(state_file) if state_file else None
         self.enrollment_ttl_seconds = max(60, int(enrollment_ttl_seconds))
         self.issuer = str(issuer or "CLI Gateway").strip() or "CLI Gateway"
+        self.approval_grace_seconds = max(0, int(approval_grace_seconds))
         self._challenges: Dict[str, TwoFactorChallenge] = {}
         self._pending_enrollments: Dict[str, TwoFactorEnrollment] = {}
         self._pending_approval_inputs: Dict[str, PendingApprovalInput] = {}
+        self._approval_windows: Dict[str, ApprovalWindow] = {}
         self._load_state()
 
     @staticmethod
@@ -137,6 +149,57 @@ class TwoFactorManager:
         stale_enrollments = [uid for uid, st in self._pending_enrollments.items() if st.expires_at <= ts]
         for uid in stale_enrollments:
             self._pending_enrollments.pop(uid, None)
+        stale_windows = [key for key, st in self._approval_windows.items() if st.expires_at <= ts]
+        for key in stale_windows:
+            self._approval_windows.pop(key, None)
+
+    @staticmethod
+    def _window_key(user_id: str, channel: str, chat_id: str) -> str:
+        return f"{str(user_id)}|{str(channel)}|{str(chat_id)}"
+
+    def activate_approval_window(
+        self,
+        user_id: str,
+        channel: str,
+        chat_id: str,
+        ttl_seconds: Optional[int] = None,
+    ) -> dict:
+        now = time.time()
+        self._cleanup(now)
+        ttl = self.approval_grace_seconds if ttl_seconds is None else max(0, int(ttl_seconds))
+        key = self._window_key(str(user_id), str(channel), str(chat_id))
+        window = ApprovalWindow(
+            user_id=str(user_id),
+            channel=str(channel),
+            chat_id=str(chat_id),
+            created_at=now,
+            expires_at=now + ttl,
+        )
+        self._approval_windows[key] = window
+        return {
+            "user_id": window.user_id,
+            "channel": window.channel,
+            "chat_id": window.chat_id,
+            "created_at": window.created_at,
+            "expires_at": window.expires_at,
+            "ttl_seconds": ttl,
+        }
+
+    def get_approval_window(self, user_id: str, channel: str, chat_id: str) -> Optional[dict]:
+        now = time.time()
+        self._cleanup(now)
+        key = self._window_key(str(user_id), str(channel), str(chat_id))
+        window = self._approval_windows.get(key)
+        if not window:
+            return None
+        return {
+            "user_id": window.user_id,
+            "channel": window.channel,
+            "chat_id": window.chat_id,
+            "created_at": window.created_at,
+            "expires_at": window.expires_at,
+            "ttl_seconds": max(0, int(window.expires_at - now)),
+        }
 
     def set_pending_approval_input(self, user_id: str, challenge_id: str, retry_cmd: str) -> None:
         now = time.time()

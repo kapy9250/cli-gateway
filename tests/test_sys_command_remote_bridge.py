@@ -133,6 +133,149 @@ async def test_sys_journal_accepts_plain_totp_reply_and_executes(
 
 
 @pytest.mark.asyncio
+async def test_sys_approval_window_skips_second_challenge_for_10_minutes(
+    session_manager, mock_agent, fake_channel, sample_config, billing, tmp_path
+):
+    auth = Auth(
+        channel_allowed={"telegram": ["123"]},
+        state_file=str(tmp_path / "auth.json"),
+        system_admin_users=["123"],
+    )
+    secret = "JBSWY3DPEHPK3PXP"
+    two_factor = TwoFactorManager(
+        enabled=True,
+        secrets_by_user={"123": secret},
+        approval_grace_seconds=600,
+    )
+    remote = FakeSystemClient(
+        {"ok": True, "lines": 5, "output": "remote-journal", "returncode": 0, "truncated": False}
+    )
+    router = Router(
+        auth=auth,
+        session_manager=session_manager,
+        agents={"claude": mock_agent},
+        channel=fake_channel,
+        config=_system_config(sample_config),
+        billing=billing,
+        two_factor=two_factor,
+        system_executor=None,
+        system_client=remote,
+        system_grant=SystemGrantManager(secret="bridge-secret", ttl_seconds=60),
+    )
+
+    await router.handle_message(
+        IncomingMessage(
+            channel="telegram",
+            chat_id="chat_1",
+            user_id="123",
+            text="kapy sys journal 5",
+            is_private=True,
+            is_reply_to_bot=False,
+            is_mention_bot=False,
+        )
+    )
+    code = two_factor._totp_code(secret, time.time())
+    await router.handle_message(
+        IncomingMessage(
+            channel="telegram",
+            chat_id="chat_1",
+            user_id="123",
+            text=code,
+            is_private=True,
+            is_reply_to_bot=False,
+            is_mention_bot=False,
+        )
+    )
+    assert len(remote.calls) == 1
+
+    # Different op type in same chat should bypass challenge while window is active.
+    await router.handle_message(
+        IncomingMessage(
+            channel="telegram",
+            chat_id="chat_1",
+            user_id="123",
+            text="/sys docker ps",
+            is_private=True,
+            is_reply_to_bot=False,
+            is_mention_bot=False,
+        )
+    )
+    assert len(remote.calls) == 2
+    assert remote.calls[1]["action"] == {"op": "docker_exec", "args": ["ps"]}
+    assert "该操作需要 2FA 审批" not in (fake_channel.last_sent_text() or "")
+
+
+@pytest.mark.asyncio
+async def test_sys_approval_window_is_chat_scoped(
+    session_manager, mock_agent, fake_channel, sample_config, billing, tmp_path
+):
+    auth = Auth(
+        channel_allowed={"telegram": ["123"]},
+        state_file=str(tmp_path / "auth.json"),
+        system_admin_users=["123"],
+    )
+    secret = "JBSWY3DPEHPK3PXP"
+    two_factor = TwoFactorManager(
+        enabled=True,
+        secrets_by_user={"123": secret},
+        approval_grace_seconds=600,
+    )
+    remote = FakeSystemClient({"ok": True, "lines": 5, "output": "remote-journal"})
+    router = Router(
+        auth=auth,
+        session_manager=session_manager,
+        agents={"claude": mock_agent},
+        channel=fake_channel,
+        config=_system_config(sample_config),
+        billing=billing,
+        two_factor=two_factor,
+        system_executor=None,
+        system_client=remote,
+        system_grant=SystemGrantManager(secret="bridge-secret", ttl_seconds=60),
+    )
+
+    await router.handle_message(
+        IncomingMessage(
+            channel="telegram",
+            chat_id="chat_1",
+            user_id="123",
+            text="kapy sys journal 5",
+            is_private=True,
+            is_reply_to_bot=False,
+            is_mention_bot=False,
+        )
+    )
+    code = two_factor._totp_code(secret, time.time())
+    await router.handle_message(
+        IncomingMessage(
+            channel="telegram",
+            chat_id="chat_1",
+            user_id="123",
+            text=code,
+            is_private=True,
+            is_reply_to_bot=False,
+            is_mention_bot=False,
+        )
+    )
+    assert len(remote.calls) == 1
+
+    # Same user but different chat must re-challenge.
+    await router.handle_message(
+        IncomingMessage(
+            channel="telegram",
+            chat_id="chat_2",
+            user_id="123",
+            text="kapy sys journal 5",
+            is_private=True,
+            is_reply_to_bot=False,
+            is_mention_bot=False,
+        )
+    )
+    assert len(remote.calls) == 1
+    assert "该操作需要 2FA 审批" in (fake_channel.last_sent_text() or "")
+
+
+@pytest.mark.asyncio
 async def test_sys_journal_non_code_reply_fails_and_ends_verification(
     session_manager, mock_agent, fake_channel, sample_config, billing, tmp_path
 ):

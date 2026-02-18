@@ -100,3 +100,24 @@ def test_pending_approval_input_lifecycle():
     assert approved is not None
     assert approved["challenge_id"] == challenge.challenge_id
     assert manager.get_pending_approval_input("u1") is None
+
+
+def test_approval_window_activation_and_scope():
+    manager = TwoFactorManager(enabled=True, approval_grace_seconds=600)
+    w = manager.activate_approval_window("u1", "telegram", "chat_1")
+    assert int(w["ttl_seconds"]) == 600
+
+    same_scope = manager.get_approval_window("u1", "telegram", "chat_1")
+    assert same_scope is not None
+    assert same_scope["ttl_seconds"] > 0
+
+    other_chat = manager.get_approval_window("u1", "telegram", "chat_2")
+    assert other_chat is None
+
+
+def test_approval_window_expires():
+    manager = TwoFactorManager(enabled=True, approval_grace_seconds=1)
+    manager.activate_approval_window("u1", "telegram", "chat_1")
+    assert manager.get_approval_window("u1", "telegram", "chat_1") is not None
+    time.sleep(1.1)
+    assert manager.get_approval_window("u1", "telegram", "chat_1") is None

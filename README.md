@@ -76,18 +76,18 @@ kapy sysauth setup start
 kapy sysauth setup verify <totp_code>
 ```
 
-system 模式运维命令（所有 `/sys` 操作都需要 challenge）：
+system 模式运维命令（首次敏感操作触发 2FA，直接回复验证码；同一聊天 10 分钟内免挑战）：
 
 ```bash
 kapy sys journal cli-gateway.service 80
-kapy sys journal cli-gateway.service 80 --challenge <challenge_id>
-kapy sys read /etc/hosts --challenge <challenge_id>
-kapy sys read /etc/shadow --challenge <challenge_id>
-kapy sys cron list --challenge <challenge_id>
+kapy sys read /etc/hosts
+kapy sys read /etc/shadow
+kapy sys cron list
 kapy sys cron upsert backup-job "*/5 * * * *" "/usr/local/bin/backup.sh"
 kapy sys docker ps -a
 kapy sys config write /etc/myapp.conf <base64_content>
 kapy sys config rollback /etc/myapp.conf /etc/myapp.conf.bak.20260216_200000
+# 可选兼容：仍支持 --challenge <challenge_id>
 ```
 
 root 侧 system service（独立进程）：

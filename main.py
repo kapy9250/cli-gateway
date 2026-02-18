@@ -284,6 +284,7 @@ async def main(argv=None):
             state_file=two_factor_conf.get('state_file'),
             enrollment_ttl_seconds=two_factor_conf.get('enrollment_ttl_seconds', 600),
             issuer=two_factor_conf.get('issuer', 'CLI Gateway'),
+            approval_grace_seconds=two_factor_conf.get('approval_grace_seconds', 600),
         )
         logger.info("✅ Two-factor manager initialized (enabled=%s)", two_factor.enabled)
         validate_system_security_requirements(runtime, auth, two_factor)

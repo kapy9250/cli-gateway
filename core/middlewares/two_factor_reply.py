@@ -40,6 +40,12 @@ async def two_factor_reply_middleware(ctx: "Context", call_next: Callable[[], Aw
             await ctx.router._reply(ctx.message, f"❌ 2FA 验证失败: <code>{reason}</code>")
             return
 
+        manager.activate_approval_window(
+            ctx.user_id,
+            ctx.message.channel,
+            ctx.message.chat_id,
+        )
+
         retry_cmd = str(approved.get("retry_cmd", "")).strip()
         challenge_id = str(approved.get("challenge_id", "")).strip()
         if not retry_cmd:

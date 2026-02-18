@@ -232,7 +232,15 @@ async def handle_sysauth(ctx: "Context") -> None:
         if not ok:
             await ctx.router._reply(ctx.message, f"❌ 2FA 审批失败: <code>{reason}</code>")
             return
-        await ctx.router._reply(ctx.message, "✅ 2FA 审批通过")
+        window = manager.activate_approval_window(
+            ctx.user_id,
+            ctx.message.channel,
+            ctx.message.chat_id,
+        )
+        await ctx.router._reply(
+            ctx.message,
+            f"✅ 2FA 审批通过，本聊天 <code>{window.get('ttl_seconds')}</code> 秒内免挑战",
+        )
         return
 
     if sub == "status":
