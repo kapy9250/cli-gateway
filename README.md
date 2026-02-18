@@ -106,6 +106,14 @@ python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 ```
 
+建议在每次部署后写入版本文件（供 `/current` 展示）：
+
+```bash
+cd /opt/cli-gateway
+./.venv/bin/python scripts/write_runtime_version.py
+# 会写入 /opt/cli-gateway/.runtime-version，例如 git:7ef7313
+```
+
 `cli-gateway-system@<id>` 仍是完整网关进程，需要 `<id>.yaml` 提供 `session/agents/channels` 等配置。
 如果只验证 root 执行桥接，可仅启动 `cli-gateway-sys-executor@<id>`（最小 `system_service/system_ops` 配置即可）。
 
