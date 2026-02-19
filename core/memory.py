@@ -725,6 +725,7 @@ class MemoryManager:
         rows: List[MemoryRecord] = []
         used_vector = False
         fallback_to_text = False
+        effective_result_count = 0
 
         vector = await self._embed(q)
         if vector and self._vector_supported and self._use_vector_column:
@@ -736,17 +737,19 @@ class MemoryManager:
                 max(1, int(limit)),
                 float(min_score),
             )
+            effective_result_count = len(rows)
         if not rows:
             fallback_to_text = used_vector
-            rows = await asyncio.to_thread(
-                self._search_text_sync,
+            rows, text_hit = await asyncio.to_thread(
+                self._search_text_with_meta_sync,
                 user_id,
                 q,
                 max(1, int(limit)),
             )
+            effective_result_count = len(rows) if text_hit else 0
 
         latency_ms = max(0, int((time.perf_counter() - started) * 1000))
-        top_score = float(rows[0].score) if rows else None
+        top_score = float(rows[0].score) if rows and effective_result_count > 0 else None
         retrieval_id: Optional[int] = None
         try:
             retrieval_id = await asyncio.to_thread(
@@ -755,7 +758,7 @@ class MemoryManager:
                 session_id,
                 channel,
                 q,
-                len(rows),
+                effective_result_count,
                 top_score,
                 latency_ms,
                 used_vector,
@@ -1060,6 +1063,11 @@ class MemoryManager:
                 return filtered
 
     def _search_text_sync(self, user_id: str, query: str, limit: int) -> List[MemoryRecord]:
+        rows, _ = self._search_text_with_meta_sync(user_id, query, limit)
+        return rows
+
+    def _search_text_with_meta_sync(self, user_id: str, query: str, limit: int) -> tuple[List[MemoryRecord], bool]:
+        """Return rows and whether there was a real query match (vs fallback rows)."""
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1078,7 +1086,8 @@ class MemoryManager:
                     (query, user_id, self.SYSTEM_OWNER, query, limit),
                 )
                 rows = [self._row_to_record(row) for row in cur.fetchall()]
-                if not rows:
+                matched = bool(rows)
+                if not matched:
                     cur.execute(
                         """
                         SELECT id, owner_user_id, tier, memory_type, domain, topic, item,
@@ -1096,7 +1105,7 @@ class MemoryManager:
                 if rows:
                     self._touch_rows_sync(cur, rows)
                     conn.commit()
-                return rows
+                return rows, matched
 
     def _touch_rows_sync(self, cur, rows: List[MemoryRecord]) -> None:
         ids = [int(row.memory_id) for row in rows]

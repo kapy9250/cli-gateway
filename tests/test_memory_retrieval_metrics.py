@@ -40,8 +40,8 @@ async def test_search_memories_with_event_logs_retrieval(monkeypatch):
     async def fake_embed(_text: str):
         return None
 
-    def fake_search_text(_user_id: str, _query: str, _limit: int):
-        return [_row(memory_id=9)]
+    def fake_search_text_with_meta(_user_id: str, _query: str, _limit: int):
+        return ([_row(memory_id=9)], True)
 
     captured = {}
 
@@ -50,7 +50,7 @@ async def test_search_memories_with_event_logs_retrieval(monkeypatch):
         return 77
 
     monkeypatch.setattr(mgr, "_embed", fake_embed)
-    monkeypatch.setattr(mgr, "_search_text_sync", fake_search_text)
+    monkeypatch.setattr(mgr, "_search_text_with_meta_sync", fake_search_text_with_meta)
     monkeypatch.setattr(mgr, "_log_retrieval_event_sync", fake_log_event)
 
     rows, retrieval_id = await mgr.search_memories_with_event(
@@ -91,4 +91,3 @@ async def test_build_memory_context_marks_injection(monkeypatch):
     out = await mgr.build_memory_context(user_id="u-2", query="deploy", session_id="s-2", channel="telegram")
     assert "[MEMORY CONTEXT]" in out
     assert marks == [(55, "u-2", 1)]
-
