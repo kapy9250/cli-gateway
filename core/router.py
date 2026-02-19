@@ -38,6 +38,7 @@ class Router:
         channel: BaseChannel,
         config: dict,
         billing: Optional[BillingTracker] = None,
+        memory_manager: Optional[object] = None,
         two_factor: Optional[object] = None,
         system_executor: Optional[object] = None,
         system_client: Optional[object] = None,
@@ -51,6 +52,7 @@ class Router:
         self.channel = channel
         self.config = config
         self.billing = billing
+        self.memory_manager = memory_manager
         self.two_factor = two_factor
         self.system_executor = system_executor
         self.system_client = system_client
@@ -115,6 +117,7 @@ class Router:
             router=self,
             auth=self.auth,
             session_manager=self.session_manager,
+            memory_manager=self.memory_manager,
             agents=self.agents,
             channel=self.channel,
             billing=self.billing,
@@ -334,8 +337,18 @@ class Router:
             "If the task semantics clearly require notifying additional people, mention them too.\n"
             "[END SENDER CONTEXT]\n\n"
         )
+        memory_context = ""
+        if self.memory_manager is not None:
+            try:
+                memory_context = await self.memory_manager.build_memory_context(
+                    user_id=str(message.user_id),
+                    query=message.text or "",
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Failed to inject memory context: %s", e)
+
         if prompt:
-            prompt = f"{channel_context}{sender_context}{prompt}"
+            prompt = f"{channel_context}{sender_context}{memory_context}{prompt}"
 
         return prompt
 

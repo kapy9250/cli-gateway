@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from main import apply_runtime_overrides, validate_system_security_requirements
+from main import apply_runtime_overrides, print_runtime_summary, validate_system_security_requirements
 
 
 def _args(instance_id: str, namespace_paths: bool = True):
@@ -99,3 +99,26 @@ def test_validate_system_security_requirements_accepts_sys_alias():
     auth = SimpleNamespace(system_admin_users={"123"})
     two_factor = SimpleNamespace(enabled=True, secrets_by_user={"123": "ABC"})
     validate_system_security_requirements(runtime, auth, two_factor)
+
+
+def test_print_runtime_summary_redacts_memory_dsn(capsys):
+    cfg = {
+        "runtime": {
+            "mode": "user",
+            "instance_id": "inst-a",
+            "version": "test-version",
+            "namespace_paths": False,
+        },
+        "memory": {
+            "enabled": True,
+            "dsn": "postgresql://alice:super-secret@db.internal:5432/cli_gateway",
+            "db_path": "./data/memory.db",
+        },
+    }
+    args = SimpleNamespace(config="config.yaml")
+
+    print_runtime_summary(cfg, args)
+    out = capsys.readouterr().out
+
+    assert "memory.dsn: postgresql://alice:***@db.internal:5432/cli_gateway" in out
+    assert "super-secret" not in out

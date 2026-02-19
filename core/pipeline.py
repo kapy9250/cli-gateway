@@ -33,6 +33,7 @@ class Context:
     router: object  # Router instance — avoids circular import
     auth: Auth
     session_manager: SessionManager
+    memory_manager: Optional[object]
     agents: Dict[str, "BaseAgent"]
     channel: BaseChannel
     billing: Optional[BillingTracker]

@@ -22,7 +22,7 @@ class TestCommandRegistry:
             "/start", "/help", "/agent", "/sessions", "/kill",
             "/current", "/switch", "/model", "/param", "/params", "/reset",
             "/files", "/download", "/cancel", "/name", "/history",
-            "/whoami", "/sudo", "/sysauth",
+            "/whoami", "/sudo", "/sysauth", "/memory",
         }
         registered = {spec.name for spec in registry.list_all()}
         assert registered == expected

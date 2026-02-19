@@ -286,6 +286,48 @@ session:
   cleanup_files_after_days: 7
   max_sessions_per_user: 5
 
+# ──────────── 长期记忆（PostgreSQL） ────────────
+# 默认关闭；开启后会将对话/流程等沉淀为短中长三级记忆。
+# 记忆按用户严格隔离（仅跨 session 共享，不跨用户共享）。
+memory:
+  enabled: false
+  dsn: ""  # e.g. postgresql://user:pass@127.0.0.1:5432/cli_gateway
+  # Optional local metadata path for runtime summary / namespacing.
+  db_path: "./data/memory/${CLI_GATEWAY_INSTANCE_ID}/memory.db"
+  retrieval:
+    top_k: 6
+    min_similarity: 0.2
+    candidate_limit: 64
+    context_char_limit: 1800
+  capture:
+    enabled_auto: true
+    max_content_chars: 2000
+    assistant_max_chars: 2000
+  tiers:
+    promote_hits_short_to_mid: 3
+    promote_hits_mid_to_long: 8
+  tree:
+    default_domain: "general"
+    default_topic: "misc"
+  safety:
+    reject_sensitive: true
+  embedding:
+    enabled: true
+    endpoint: "https://api.openai.com/v1/embeddings"
+    model: "text-embedding-3-small"
+    api_key_env: "OPENAI_API_KEY"
+    timeout_seconds: 10
+    dimensions: 1536
+  env_probe:
+    enabled: false
+    interval_seconds: 3600
+    timeout_seconds: 5
+    max_output_chars: 1000
+    commands:
+      - ["uname", "-a"]
+      - ["python3", "--version"]
+      - ["git", "--version"]
+
 # ──────────── 日志 ────────────
 logging:
   level: "INFO"

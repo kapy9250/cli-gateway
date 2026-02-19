@@ -64,6 +64,18 @@ async def agent_dispatcher_middleware(ctx: "Context", call_next: Callable[[], Aw
         # Record assistant response
         ctx.session_manager.add_history(session_id, "assistant", response or "", MAX_HISTORY_ENTRIES, persist=False)
         ctx.session_manager.touch(session_id)
+        if getattr(ctx, "memory_manager", None) is not None:
+            try:
+                await ctx.memory_manager.capture_turn(
+                    user_id=str(message.user_id),
+                    scope_id=ctx.router.get_scope_id(message),
+                    session_id=session_id,
+                    channel=str(message.channel),
+                    user_text=message.text or "",
+                    assistant_text=response or "",
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Failed to capture memory for session %s: %s", session_id, e)
         router._record_usage(message, agent, session, response or "")
 
 

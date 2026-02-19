@@ -8,3 +8,4 @@ from core.commands import model_cmd  # noqa: F401
 from core.commands import file_cmd  # noqa: F401
 from core.commands import sysauth_cmd  # noqa: F401
 from core.commands import sudo_cmd  # noqa: F401
+from core.commands import memory_cmd  # noqa: F401

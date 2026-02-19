@@ -10,6 +10,7 @@ import signal
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from utils.helpers import load_config
 from utils.runtime_mode import normalize_runtime_mode, to_external_mode
@@ -116,6 +117,16 @@ def apply_runtime_overrides(config: dict, args) -> dict:
         if audit_file and instance_id not in Path(str(audit_file)).parts:
             audit_cfg["file"] = _namespace_path(str(audit_file), instance_id, "file")
 
+        # Namespace optional memory DB and exported shared skill directory.
+        memory_cfg = config.get("memory", {})
+        if isinstance(memory_cfg, dict):
+            memory_db = memory_cfg.get("db_path")
+            if memory_db and instance_id not in Path(str(memory_db)).parts:
+                memory_cfg["db_path"] = _namespace_path(str(memory_db), instance_id, "file")
+            memory_skill_dir = memory_cfg.get("skill", {}).get("export_dir") if isinstance(memory_cfg.get("skill"), dict) else None
+            if memory_skill_dir and instance_id not in Path(str(memory_skill_dir)).parts:
+                memory_cfg.setdefault("skill", {})["export_dir"] = _namespace_path(str(memory_skill_dir), instance_id, "dir")
+
         runtime["namespace_paths"] = True
     else:
         runtime["namespace_paths"] = bool(runtime.get("namespace_paths", False))
@@ -123,23 +134,73 @@ def apply_runtime_overrides(config: dict, args) -> dict:
     return config
 
 
+def _mask_url_credentials(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return text
+    try:
+        parsed = urlsplit(text)
+    except Exception:
+        return "***"
+
+    if not parsed.scheme or not parsed.netloc:
+        return "***"
+
+    if parsed.username is None and parsed.password is None:
+        return text
+
+    host = parsed.hostname or ""
+    if not host:
+        return "***"
+
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+
+    if parsed.username:
+        netloc = f"{parsed.username}:***@{host}"
+    else:
+        netloc = f"***@{host}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+
+
+def _sanitize_runtime_value(field_name: str, value):
+    if value is None:
+        return None
+    key = str(field_name or "").lower()
+    if "dsn" in key:
+        return _mask_url_credentials(str(value))
+    if any(token in key for token in ("password", "passwd", "secret", "token", "api_key", "apikey")):
+        return "***"
+    return value
+
+
 def print_runtime_summary(config: dict, args) -> None:
     runtime = config.get("runtime", {})
+    lines = [
+        ("config", args.config),
+        ("mode", f"{to_external_mode(runtime.get('mode'))} (internal={runtime.get('mode')})"),
+        ("instance_id", runtime.get("instance_id")),
+        ("version", runtime.get("version")),
+        ("namespace_paths", runtime.get("namespace_paths")),
+        ("auth.state_file", config.get("auth", {}).get("state_file")),
+        ("two_factor.state_file", config.get("two_factor", {}).get("state_file")),
+        ("session.workspace_base", config.get("session", {}).get("workspace_base")),
+        ("billing.dir", config.get("billing", {}).get("dir")),
+        ("logging.file", config.get("logging", {}).get("file")),
+        ("logging.audit.file", config.get("logging", {}).get("audit", {}).get("file")),
+        ("memory.enabled", config.get("memory", {}).get("enabled", False)),
+        ("memory.dsn", config.get("memory", {}).get("dsn")),
+        ("memory.db_path", config.get("memory", {}).get("db_path")),
+        ("system_service.enabled", config.get("system_service", {}).get("enabled", False)),
+        ("system_service.socket_path", config.get("system_service", {}).get("socket_path")),
+        ("health.port", config.get("health", {}).get("port", 18800)),
+    ]
+
     print("✅ Config validation passed")
-    print(f"config: {args.config}")
-    print(f"mode: {to_external_mode(runtime.get('mode'))} (internal={runtime.get('mode')})")
-    print(f"instance_id: {runtime.get('instance_id')}")
-    print(f"version: {runtime.get('version')}")
-    print(f"namespace_paths: {runtime.get('namespace_paths')}")
-    print(f"auth.state_file: {config.get('auth', {}).get('state_file')}")
-    print(f"two_factor.state_file: {config.get('two_factor', {}).get('state_file')}")
-    print(f"session.workspace_base: {config.get('session', {}).get('workspace_base')}")
-    print(f"billing.dir: {config.get('billing', {}).get('dir')}")
-    print(f"logging.file: {config.get('logging', {}).get('file')}")
-    print(f"logging.audit.file: {config.get('logging', {}).get('audit', {}).get('file')}")
-    print(f"system_service.enabled: {config.get('system_service', {}).get('enabled', False)}")
-    print(f"system_service.socket_path: {config.get('system_service', {}).get('socket_path')}")
-    print(f"health.port: {config.get('health', {}).get('port', 18800)}")
+    for field, value in lines:
+        print(f"{field}: {_sanitize_runtime_value(field, value)}")
 
 
 def validate_system_security_requirements(runtime: dict, auth, two_factor) -> None:
@@ -245,6 +306,7 @@ async def main(argv=None):
     from aiohttp import web
     from core.auth import Auth
     from core.billing import BillingTracker
+    from core.memory import MemoryManager
     from core.session import SessionManager
     from core.router import Router
     from core.two_factor import TwoFactorManager
@@ -417,6 +479,12 @@ async def main(argv=None):
         
         # Session Manager
         session_manager = SessionManager(workspace_base)
+        memory_manager = None
+        memory_cfg = config.get("memory", {})
+        if isinstance(memory_cfg, dict) and bool(memory_cfg.get("enabled", False)):
+            memory_manager = MemoryManager(memory_cfg, runtime=runtime)
+            await memory_manager.start()
+            logger.info("✅ Memory manager initialized")
         
         # Channels
         channels = []
@@ -458,6 +526,7 @@ async def main(argv=None):
                 channel,
                 config,
                 billing=billing,
+                memory_manager=memory_manager,
                 two_factor=two_factor,
                 system_executor=system_executor,
                 system_client=system_client,
@@ -491,12 +560,19 @@ async def main(argv=None):
         health_port = config.get('health', {}).get('port', 18800)
 
         async def health_handler(request):
+            memory_stats = {}
+            if memory_manager is not None:
+                try:
+                    memory_stats = await memory_manager.health_stats()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Failed to query memory health: %s", e)
             return web.json_response({
                 "status": "ok",
                 "uptime_seconds": round(time.time() - start_time, 1),
                 "active_sessions": len(session_manager.list_all_sessions()),
                 "agents": list(agents.keys()),
                 "channels": [name for name, _ in channels],
+                "memory": memory_stats,
             })
 
         health_app = web.Application()
@@ -555,6 +631,10 @@ async def main(argv=None):
         for channel_name, channel in reversed(started_channels):
             await channel.stop()
             logger.info(f"✅ {channel_name} stopped")
+
+        if memory_manager is not None:
+            await memory_manager.stop()
+            logger.info("✅ Memory manager stopped")
 
         # Kill all running agent subprocesses
         for agent_name, agent in agents.items():
