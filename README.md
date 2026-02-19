@@ -209,6 +209,23 @@ kapy memory list short 20    # 列出短期记忆
 kapy memory find 部署流程     # 检索记忆
 kapy memory note nginx重启步骤
 kapy memory pin 12
+kapy memory fb 123 good 命中    # 对检索 request_id 反馈
+kapy memory metrics 7          # 查看近 7 天命中率/注入率等指标
+```
+
+说明：
+- `memory find` 会返回 `request_id`，可用 `memory fb` 标注好/坏命中。
+- `memory metrics` 展示 `hit_rate/context_inject_rate/feedback_coverage/positive_feedback_rate`。
+
+若使用 Cohere 作为 embeddings（OpenAI 兼容接口）：
+
+```yaml
+memory:
+  embedding:
+    endpoint: "https://api.cohere.ai/compatibility/v1/embeddings"
+    model: "embed-v4.0"
+    api_key_env: "COHERE_API_KEY"
+    dimensions: 0  # Cohere 兼容接口不支持 dimensions，设为 0 表示不传该字段
 ```
 
 ### 发送消息

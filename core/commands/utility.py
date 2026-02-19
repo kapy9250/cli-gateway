@@ -37,7 +37,7 @@ async def handle_help(ctx: "Context") -> None:
                 "name &lt;label&gt; - 为当前会话命名",
                 "cancel - 取消当前执行",
                 "history - 查看对话历史",
-                "memory - 管理长期记忆（list/find/note 等）",
+                "memory - 管理长期记忆（list/find/note/fb/metrics）",
                 "whoami - 查看当前身份与运行模式",
                 "",
                 "<b>模型配置</b>",

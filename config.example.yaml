@@ -318,6 +318,11 @@ memory:
     api_key_env: "OPENAI_API_KEY"
     timeout_seconds: 10
     dimensions: 1536
+    # Cohere OpenAI-compatible embeddings example:
+    # endpoint: "https://api.cohere.ai/compatibility/v1/embeddings"
+    # model: "embed-v4.0"
+    # api_key_env: "COHERE_API_KEY"
+    # dimensions: 0   # Cohere compatibility API does not support dimensions param
   env_probe:
     enabled: false
     interval_seconds: 3600
