@@ -183,6 +183,7 @@ class MemoryManager:
 
         self._started = False
         self._vector_supported = False
+        self._use_vector_column = False
         self._stop_event = asyncio.Event()
         self._env_probe_task: Optional[asyncio.Task] = None
         self._last_probe_at: Optional[datetime] = None
@@ -244,12 +245,7 @@ class MemoryManager:
     def _init_schema(self) -> None:
         with self._conn() as conn:
             with conn.cursor() as cur:
-                try:
-                    cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
-                    self._vector_supported = True
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("pgvector extension unavailable, vector search disabled: %s", e)
-                    self._vector_supported = False
+                self._vector_supported = self._ensure_vector_extension(cur)
 
                 if self._vector_supported:
                     embed_col = f"embedding vector({self.embedding_dim})"
@@ -289,10 +285,34 @@ class MemoryManager:
                     )
                     """
                 )
+                # Stable conflict target for upserts (expression indexes are fragile for inference).
+                cur.execute(
+                    """
+                    ALTER TABLE memory_items
+                    ADD COLUMN IF NOT EXISTS skill_key TEXT GENERATED ALWAYS AS (coalesce(skill_name, '')) STORED
+                    """
+                )
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint
+                            WHERE conname = 'memory_unique_uniq'
+                              AND conrelid = 'memory_items'::regclass
+                        ) THEN
+                            ALTER TABLE memory_items
+                            ADD CONSTRAINT memory_unique_uniq
+                            UNIQUE (owner_user_id, content_hash, memory_type, skill_key);
+                        END IF;
+                    END $$;
+                    """
+                )
                 cur.execute(
                     """
                     CREATE UNIQUE INDEX IF NOT EXISTS memory_unique_idx
-                    ON memory_items (owner_user_id, content_hash, memory_type, coalesce(skill_name, ''))
+                    ON memory_items (owner_user_id, content_hash, memory_type, skill_key)
                     """
                 )
                 cur.execute(
@@ -307,6 +327,24 @@ class MemoryManager:
                     ON memory_items (is_shared_skill, skill_name)
                     """
                 )
+                # Ensure mixed old/new schemas keep a writable fallback column.
+                cur.execute(
+                    """
+                    ALTER TABLE memory_items
+                    ADD COLUMN IF NOT EXISTS embedding_text TEXT
+                    """
+                )
+                if self._vector_supported:
+                    try:
+                        cur.execute(
+                            f"""
+                            ALTER TABLE memory_items
+                            ADD COLUMN IF NOT EXISTS embedding vector({self.embedding_dim})
+                            """
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("Failed to add vector column, fallback to text embeddings: %s", e)
+                        self._vector_supported = False
                 cur.execute(
                     """
                     CREATE INDEX IF NOT EXISTS memory_tree_idx
@@ -329,7 +367,36 @@ class MemoryManager:
                         )
                     except Exception as e:  # noqa: BLE001
                         logger.warning("Failed to create pgvector ivfflat index: %s", e)
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'memory_items'
+                    """
+                )
+                cols = {str(row[0]) for row in cur.fetchall()}
+                self._use_vector_column = bool(self._vector_supported and "embedding" in cols)
                 conn.commit()
+
+    def _ensure_vector_extension(self, cur) -> bool:
+        """Detect vector availability without requiring CREATE privilege."""
+        try:
+            cur.execute("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')")
+            installed = bool((cur.fetchone() or [False])[0])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to probe pg_extension for vector: %s", e)
+            installed = False
+
+        if installed:
+            return True
+
+        try:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.warning("pgvector extension unavailable or insufficient privilege: %s", e)
+            return False
 
     async def health_stats(self) -> Dict[str, Any]:
         if not self.enabled:
@@ -518,7 +585,7 @@ class MemoryManager:
             return []
         rows: List[MemoryRecord] = []
         vector = await self._embed(q)
-        if vector and self._vector_supported:
+        if vector and self._vector_supported and self._use_vector_column:
             rows = await asyncio.to_thread(
                 self._search_vector_sync,
                 user_id,
@@ -647,6 +714,9 @@ class MemoryManager:
         with self._conn() as conn:
             with conn.cursor() as cur:
                 if self._vector_supported:
+                    if not self._use_vector_column:
+                        self._vector_supported = False
+                if self._vector_supported and self._use_vector_column:
                     emb_value = _vector_literal(embedding) if embedding else None
                     cur.execute(
                         """
@@ -660,7 +730,7 @@ class MemoryManager:
                             %s, %s, %s, %s, %s, %s, %s,
                             FALSE, %s, %s, %s, %s::vector
                         )
-                        ON CONFLICT (owner_user_id, content_hash, memory_type, coalesce(skill_name, ''))
+                        ON CONFLICT ON CONSTRAINT memory_unique_uniq
                         DO UPDATE SET
                             summary = EXCLUDED.summary,
                             content = EXCLUDED.content,
@@ -703,7 +773,7 @@ class MemoryManager:
                             %s, %s, %s, %s, %s, %s, %s,
                             FALSE, %s, %s, %s, %s
                         )
-                        ON CONFLICT (owner_user_id, content_hash, memory_type, coalesce(skill_name, ''))
+                        ON CONFLICT ON CONSTRAINT memory_unique_uniq
                         DO UPDATE SET
                             summary = EXCLUDED.summary,
                             content = EXCLUDED.content,
@@ -772,11 +842,11 @@ class MemoryManager:
                     FROM memory_items
                     WHERE is_deleted = FALSE
                       AND embedding IS NOT NULL
-                      AND owner_user_id = %s
+                      AND (owner_user_id = %s OR owner_user_id = %s)
                     ORDER BY embedding <=> %s::vector ASC, pinned DESC, updated_at DESC
                     LIMIT %s
                     """,
-                    (vector_lit, user_id, vector_lit, limit),
+                    (vector_lit, user_id, self.SYSTEM_OWNER, vector_lit, limit),
                 )
                 rows = [self._row_to_record(row) for row in cur.fetchall()]
                 filtered = [row for row in rows if row.score >= min_score or row.pinned]
@@ -796,12 +866,12 @@ class MemoryManager:
                            created_at, updated_at
                     FROM memory_items
                     WHERE is_deleted = FALSE
-                      AND owner_user_id = %s
+                      AND (owner_user_id = %s OR owner_user_id = %s)
                       AND search_tsv @@ plainto_tsquery('simple', %s)
                     ORDER BY pinned DESC, score DESC, access_count DESC, updated_at DESC
                     LIMIT %s
                     """,
-                    (query, user_id, query, limit),
+                    (query, user_id, self.SYSTEM_OWNER, query, limit),
                 )
                 rows = [self._row_to_record(row) for row in cur.fetchall()]
                 if not rows:
@@ -812,11 +882,11 @@ class MemoryManager:
                                access_count, 0.0 AS score, created_at, updated_at
                         FROM memory_items
                         WHERE is_deleted = FALSE
-                          AND owner_user_id = %s
+                          AND (owner_user_id = %s OR owner_user_id = %s)
                         ORDER BY pinned DESC, access_count DESC, updated_at DESC
                         LIMIT %s
                         """,
-                        (user_id, limit),
+                        (user_id, self.SYSTEM_OWNER, limit),
                     )
                     rows = [self._row_to_record(row) for row in cur.fetchall()]
                 if rows:
@@ -857,11 +927,11 @@ class MemoryManager:
                         FROM memory_items
                         WHERE is_deleted = FALSE
                           AND tier = %s
-                          AND owner_user_id = %s
+                          AND (owner_user_id = %s OR owner_user_id = %s)
                         ORDER BY pinned DESC, updated_at DESC
                         LIMIT %s
                         """,
-                        (tier, user_id, limit),
+                        (tier, user_id, self.SYSTEM_OWNER, limit),
                     )
                 else:
                     cur.execute(
@@ -871,11 +941,11 @@ class MemoryManager:
                                access_count, 0.0 AS score, created_at, updated_at
                         FROM memory_items
                         WHERE is_deleted = FALSE
-                          AND owner_user_id = %s
+                          AND (owner_user_id = %s OR owner_user_id = %s)
                         ORDER BY pinned DESC, updated_at DESC
                         LIMIT %s
                         """,
-                        (user_id, limit),
+                        (user_id, self.SYSTEM_OWNER, limit),
                     )
                 return [self._row_to_record(row) for row in cur.fetchall()]
 
@@ -890,9 +960,9 @@ class MemoryManager:
                     FROM memory_items
                     WHERE id = %s
                       AND is_deleted = FALSE
-                      AND owner_user_id = %s
+                      AND (owner_user_id = %s OR owner_user_id = %s)
                     """,
-                    (memory_id, user_id),
+                    (memory_id, user_id, self.SYSTEM_OWNER),
                 )
                 row = cur.fetchone()
                 return self._row_to_record(row) if row else None

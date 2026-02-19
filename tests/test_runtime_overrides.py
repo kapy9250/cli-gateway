@@ -122,3 +122,28 @@ def test_print_runtime_summary_redacts_memory_dsn(capsys):
 
     assert "memory.dsn: postgresql://alice:***@db.internal:5432/cli_gateway" in out
     assert "super-secret" not in out
+
+
+def test_print_runtime_summary_redacts_memory_dsn_query_params(capsys):
+    cfg = {
+        "runtime": {
+            "mode": "user",
+            "instance_id": "inst-a",
+            "version": "test-version",
+            "namespace_paths": False,
+        },
+        "memory": {
+            "enabled": True,
+            "dsn": "postgresql://alice:super-secret@db.internal:5432/cli_gateway?password=hunter2&sslmode=require",
+            "db_path": "./data/memory.db",
+        },
+    }
+    args = SimpleNamespace(config="config.yaml")
+
+    print_runtime_summary(cfg, args)
+    out = capsys.readouterr().out
+
+    assert (
+        "memory.dsn: postgresql://alice:***@db.internal:5432/cli_gateway?password=***&sslmode=***" in out
+    )
+    assert "hunter2" not in out

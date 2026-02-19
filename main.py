@@ -162,7 +162,16 @@ def _mask_url_credentials(value: str) -> str:
         netloc = f"{parsed.username}:***@{host}"
     else:
         netloc = f"***@{host}"
-    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+    query = parsed.query
+    if query:
+        masked_parts = []
+        for item in query.split("&"):
+            if not item:
+                continue
+            key = item.split("=", 1)[0]
+            masked_parts.append(f"{key}=***")
+        query = "&".join(masked_parts)
+    return urlunsplit((parsed.scheme, netloc, parsed.path, query, parsed.fragment))
 
 
 def _sanitize_runtime_value(field_name: str, value):
