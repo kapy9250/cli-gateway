@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,6 +86,18 @@ class MemoryRecord:
     score: float = 0.0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+@dataclass
+class RetrievalEvent:
+    retrieval_id: int
+    query: str
+    result_count: int
+    top_score: Optional[float]
+    latency_ms: int
+    context_injected: bool
+    feedback: Optional[str]
+    created_at: Optional[datetime] = None
 
 
 class OpenAIEmbeddingClient:
@@ -357,6 +370,95 @@ class MemoryManager:
                     ON memory_items USING GIN (search_tsv)
                     """
                 )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS memory_retrieval_events (
+                        id BIGSERIAL PRIMARY KEY,
+                        owner_user_id TEXT NOT NULL,
+                        session_id TEXT,
+                        channel TEXT,
+                        query TEXT NOT NULL,
+                        query_hash TEXT NOT NULL,
+                        result_count INTEGER NOT NULL DEFAULT 0,
+                        top_score DOUBLE PRECISION,
+                        latency_ms INTEGER NOT NULL DEFAULT 0,
+                        used_vector BOOLEAN NOT NULL DEFAULT FALSE,
+                        fallback_to_text BOOLEAN NOT NULL DEFAULT FALSE,
+                        context_injected BOOLEAN NOT NULL DEFAULT FALSE,
+                        injected_count INTEGER NOT NULL DEFAULT 0,
+                        feedback TEXT,
+                        feedback_note TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE memory_retrieval_events
+                    ADD COLUMN IF NOT EXISTS session_id TEXT
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE memory_retrieval_events
+                    ADD COLUMN IF NOT EXISTS channel TEXT
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE memory_retrieval_events
+                    ADD COLUMN IF NOT EXISTS used_vector BOOLEAN NOT NULL DEFAULT FALSE
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE memory_retrieval_events
+                    ADD COLUMN IF NOT EXISTS fallback_to_text BOOLEAN NOT NULL DEFAULT FALSE
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE memory_retrieval_events
+                    ADD COLUMN IF NOT EXISTS context_injected BOOLEAN NOT NULL DEFAULT FALSE
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE memory_retrieval_events
+                    ADD COLUMN IF NOT EXISTS injected_count INTEGER NOT NULL DEFAULT 0
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE memory_retrieval_events
+                    ADD COLUMN IF NOT EXISTS feedback TEXT
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE memory_retrieval_events
+                    ADD COLUMN IF NOT EXISTS feedback_note TEXT
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE memory_retrieval_events
+                    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS memory_retrieval_owner_created_idx
+                    ON memory_retrieval_events (owner_user_id, created_at DESC)
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS memory_retrieval_query_hash_idx
+                    ON memory_retrieval_events (owner_user_id, query_hash)
+                    """
+                )
                 if self._vector_supported:
                     try:
                         cur.execute(
@@ -447,6 +549,8 @@ class MemoryManager:
         *,
         user_id: str,
         query: str,
+        session_id: Optional[str] = None,
+        channel: Optional[str] = None,
         top_k: Optional[int] = None,
         char_limit: Optional[int] = None,
         min_score: Optional[float] = None,
@@ -457,9 +561,11 @@ class MemoryManager:
         if not q:
             return ""
 
-        rows = await self.search_memories(
+        rows, retrieval_id = await self.search_memories_with_event(
             user_id=user_id,
             query=q,
+            session_id=session_id,
+            channel=channel,
             limit=top_k or self.default_top_k,
             min_score=min_score if min_score is not None else self.default_min_similarity,
         )
@@ -477,6 +583,17 @@ class MemoryManager:
             lines.append(line)
             consumed += len(line) + 1
         lines.append("[END MEMORY CONTEXT]")
+        injected_count = max(0, len(lines) - 2)
+        if retrieval_id is not None:
+            try:
+                await asyncio.to_thread(
+                    self._mark_retrieval_context_injected_sync,
+                    retrieval_id,
+                    user_id,
+                    injected_count,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Failed to mark retrieval context injection: %s", e)
         return "\n".join(lines) + "\n\n"
 
     async def capture_turn(
@@ -577,15 +694,41 @@ class MemoryManager:
         limit: int = 6,
         min_score: float = 0.2,
     ) -> List[MemoryRecord]:
+        rows, _ = await self.search_memories_with_event(
+            user_id=user_id,
+            query=query,
+            session_id=None,
+            channel=None,
+            limit=limit,
+            min_score=min_score,
+        )
+        return rows
+
+    async def search_memories_with_event(
+        self,
+        *,
+        user_id: str,
+        query: str,
+        session_id: Optional[str] = None,
+        channel: Optional[str] = None,
+        limit: int = 6,
+        min_score: float = 0.2,
+    ) -> tuple[List[MemoryRecord], Optional[int]]:
         if not self.enabled:
-            return []
+            return [], None
 
         q = _norm_text(query, max_chars=600)
         if not q:
-            return []
+            return [], None
+
+        started = time.perf_counter()
         rows: List[MemoryRecord] = []
+        used_vector = False
+        fallback_to_text = False
+
         vector = await self._embed(q)
         if vector and self._vector_supported and self._use_vector_column:
+            used_vector = True
             rows = await asyncio.to_thread(
                 self._search_vector_sync,
                 user_id,
@@ -594,13 +737,34 @@ class MemoryManager:
                 float(min_score),
             )
         if not rows:
+            fallback_to_text = used_vector
             rows = await asyncio.to_thread(
                 self._search_text_sync,
                 user_id,
                 q,
                 max(1, int(limit)),
             )
-        return rows
+
+        latency_ms = max(0, int((time.perf_counter() - started) * 1000))
+        top_score = float(rows[0].score) if rows else None
+        retrieval_id: Optional[int] = None
+        try:
+            retrieval_id = await asyncio.to_thread(
+                self._log_retrieval_event_sync,
+                user_id,
+                session_id,
+                channel,
+                q,
+                len(rows),
+                top_score,
+                latency_ms,
+                used_vector,
+                fallback_to_text,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to log retrieval event: %s", e)
+
+        return rows, retrieval_id
 
     async def list_memories(
         self,
@@ -634,6 +798,46 @@ class MemoryManager:
 
     async def list_shared_skills(self, *, limit: int = 30) -> List[MemoryRecord]:
         return []
+
+    async def record_retrieval_feedback(
+        self,
+        *,
+        user_id: str,
+        retrieval_id: int,
+        feedback: str,
+        note: Optional[str] = None,
+    ) -> bool:
+        if not self.enabled:
+            return False
+        fb = str(feedback or "").strip().lower()
+        if fb not in {"good", "bad"}:
+            return False
+        safe_note = _norm_text(note or "", max_chars=300) or None
+        return await asyncio.to_thread(
+            self._record_retrieval_feedback_sync,
+            str(user_id),
+            int(retrieval_id),
+            fb,
+            safe_note,
+        )
+
+    async def retrieval_stats(self, *, user_id: str, days: int = 7) -> Dict[str, Any]:
+        if not self.enabled:
+            return {"enabled": False}
+        span_days = max(1, min(90, int(days)))
+        out = await asyncio.to_thread(self._retrieval_stats_sync, str(user_id), span_days)
+        out["enabled"] = True
+        out["days"] = span_days
+        return out
+
+    async def recent_retrieval_events(self, *, user_id: str, limit: int = 10) -> List[RetrievalEvent]:
+        if not self.enabled:
+            return []
+        return await asyncio.to_thread(
+            self._recent_retrieval_events_sync,
+            str(user_id),
+            max(1, min(50, int(limit))),
+        )
 
     def _classify_type(self, user_text: str, assistant_text: str) -> tuple[str, float, float]:
         text = (user_text + "\n" + assistant_text).lower()
@@ -1002,6 +1206,178 @@ class MemoryManager:
                 changed = cur.rowcount > 0
                 conn.commit()
                 return changed
+
+    def _log_retrieval_event_sync(
+        self,
+        user_id: str,
+        session_id: Optional[str],
+        channel: Optional[str],
+        query: str,
+        result_count: int,
+        top_score: Optional[float],
+        latency_ms: int,
+        used_vector: bool,
+        fallback_to_text: bool,
+    ) -> Optional[int]:
+        query_text = _norm_text(query, max_chars=600)
+        query_hash = _hash_text(user_id, query_text)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO memory_retrieval_events (
+                        owner_user_id, session_id, channel, query, query_hash,
+                        result_count, top_score, latency_ms, used_vector, fallback_to_text
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        user_id,
+                        session_id,
+                        channel,
+                        query_text,
+                        query_hash,
+                        max(0, int(result_count)),
+                        float(top_score) if top_score is not None else None,
+                        max(0, int(latency_ms)),
+                        bool(used_vector),
+                        bool(fallback_to_text),
+                    ),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                return int(row[0]) if row else None
+
+    def _mark_retrieval_context_injected_sync(self, retrieval_id: int, user_id: str, injected_count: int) -> bool:
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE memory_retrieval_events
+                    SET context_injected = TRUE,
+                        injected_count = GREATEST(0, %s),
+                        updated_at = NOW()
+                    WHERE id = %s
+                      AND owner_user_id = %s
+                    """,
+                    (int(injected_count), int(retrieval_id), str(user_id)),
+                )
+                changed = cur.rowcount > 0
+                conn.commit()
+                return changed
+
+    def _record_retrieval_feedback_sync(
+        self,
+        user_id: str,
+        retrieval_id: int,
+        feedback: str,
+        note: Optional[str],
+    ) -> bool:
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE memory_retrieval_events
+                    SET feedback = %s,
+                        feedback_note = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                      AND owner_user_id = %s
+                    """,
+                    (str(feedback), note, int(retrieval_id), str(user_id)),
+                )
+                changed = cur.rowcount > 0
+                conn.commit()
+                return changed
+
+    def _retrieval_stats_sync(self, user_id: str, days: int) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "total_queries": 0,
+            "hit_queries": 0,
+            "context_injected_queries": 0,
+            "avg_result_count": 0.0,
+            "avg_latency_ms": 0.0,
+            "vector_queries": 0,
+            "feedback_good": 0,
+            "feedback_bad": 0,
+            "hit_rate": 0.0,
+            "context_inject_rate": 0.0,
+            "vector_usage_rate": 0.0,
+            "feedback_coverage": 0.0,
+            "positive_feedback_rate": 0.0,
+        }
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*)::BIGINT AS total_queries,
+                        COALESCE(SUM((result_count > 0)::INT), 0)::BIGINT AS hit_queries,
+                        COALESCE(SUM((context_injected)::INT), 0)::BIGINT AS context_injected_queries,
+                        COALESCE(AVG(result_count), 0.0)::DOUBLE PRECISION AS avg_result_count,
+                        COALESCE(AVG(latency_ms), 0.0)::DOUBLE PRECISION AS avg_latency_ms,
+                        COALESCE(SUM((used_vector)::INT), 0)::BIGINT AS vector_queries,
+                        COALESCE(SUM((feedback = 'good')::INT), 0)::BIGINT AS feedback_good,
+                        COALESCE(SUM((feedback = 'bad')::INT), 0)::BIGINT AS feedback_bad
+                    FROM memory_retrieval_events
+                    WHERE owner_user_id = %s
+                      AND created_at >= NOW() - (%s::TEXT || ' days')::INTERVAL
+                    """,
+                    (str(user_id), int(days)),
+                )
+                row = cur.fetchone()
+        if not row:
+            return out
+
+        out["total_queries"] = int(row[0] or 0)
+        out["hit_queries"] = int(row[1] or 0)
+        out["context_injected_queries"] = int(row[2] or 0)
+        out["avg_result_count"] = float(row[3] or 0.0)
+        out["avg_latency_ms"] = float(row[4] or 0.0)
+        out["vector_queries"] = int(row[5] or 0)
+        out["feedback_good"] = int(row[6] or 0)
+        out["feedback_bad"] = int(row[7] or 0)
+
+        total = max(0, int(out["total_queries"]))
+        feedback_total = int(out["feedback_good"]) + int(out["feedback_bad"])
+        if total > 0:
+            out["hit_rate"] = float(out["hit_queries"]) / float(total)
+            out["context_inject_rate"] = float(out["context_injected_queries"]) / float(total)
+            out["vector_usage_rate"] = float(out["vector_queries"]) / float(total)
+            out["feedback_coverage"] = float(feedback_total) / float(total)
+        if feedback_total > 0:
+            out["positive_feedback_rate"] = float(out["feedback_good"]) / float(feedback_total)
+        return out
+
+    def _recent_retrieval_events_sync(self, user_id: str, limit: int) -> List[RetrievalEvent]:
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, query, result_count, top_score, latency_ms,
+                           context_injected, feedback, created_at
+                    FROM memory_retrieval_events
+                    WHERE owner_user_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (str(user_id), int(limit)),
+                )
+                rows = cur.fetchall()
+        return [
+            RetrievalEvent(
+                retrieval_id=int(row[0]),
+                query=str(row[1] or ""),
+                result_count=int(row[2] or 0),
+                top_score=float(row[3]) if row[3] is not None else None,
+                latency_ms=int(row[4] or 0),
+                context_injected=bool(row[5]),
+                feedback=(str(row[6]) if row[6] else None),
+                created_at=row[7],
+            )
+            for row in rows
+        ]
 
     def _share_memory_as_skill_sync(self, user_id: str, memory_id: int, skill_slug: str) -> Optional[str]:
         with self._conn() as conn:

@@ -343,6 +343,8 @@ class Router:
                 memory_context = await self.memory_manager.build_memory_context(
                     user_id=str(message.user_id),
                     query=message.text or "",
+                    session_id=getattr(current, "session_id", None),
+                    channel=str(message.channel),
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("Failed to inject memory context: %s", e)
