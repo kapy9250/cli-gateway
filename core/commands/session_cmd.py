@@ -40,12 +40,21 @@ async def handle_sessions(ctx: "Context") -> None:
 async def handle_current(ctx: "Context") -> None:
     scope_id = ctx.router.get_scope_id(ctx.message)
     current = ctx.session_manager.get_active_session_for_scope(scope_id)
+    scope_agent = ctx.router._get_scope_agent(scope_id)
+    default_agent = str(getattr(ctx.router, "default_agent", "") or "-")
     version = _runtime_version(ctx)
     mode = to_external_mode(((ctx.config or {}).get("runtime") or {}).get("mode", "session"))
     if not current:
         await ctx.router._reply(
             ctx.message,
-            f"当前无活跃会话\nAgent: -\n模式: <code>{mode}</code>\n版本: <code>{version}</code>",
+            (
+                "当前无活跃会话\n"
+                "Agent: -\n"
+                f"下一条将使用: {scope_agent}\n"
+                f"默认 Agent: {default_agent}\n"
+                f"模式: <code>{mode}</code>\n"
+                f"版本: <code>{version}</code>"
+            ),
         )
         return
     await ctx.router._reply(
@@ -53,6 +62,7 @@ async def handle_current(ctx: "Context") -> None:
         (
             f"当前会话: {current.session_id}\n"
             f"Agent: {current.agent_name}\n"
+            f"作用域偏好 Agent: {scope_agent}\n"
             f"模式: <code>{mode}</code>\n"
             f"版本: <code>{version}</code>"
         ),

@@ -96,6 +96,16 @@ class TestCurrentCommand:
         assert "claude" in text
         assert "git:test123" in text
 
+    @pytest.mark.asyncio
+    async def test_current_no_session_shows_scope_agent_preference(self, router, make_message, fake_channel):
+        message = make_message(text="/current")
+        scope_id = router.get_scope_id(message)
+        router._set_scope_agent(scope_id, "gemini")
+        await router.handle_message(message)
+        text = fake_channel.last_sent_text()
+        assert "下一条将使用" in text
+        assert "gemini" in text
+
 
 class TestSwitchCommand:
 
