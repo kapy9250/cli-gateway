@@ -31,6 +31,39 @@ class TestForwardBasic:
         assert active.agent_name == "claude"
 
 
+class TestContextInjection:
+
+    @pytest.mark.asyncio
+    async def test_forward_injects_recent_context_on_followup(self, router, make_message, mock_agent):
+        await router.handle_message(make_message(text="请检查端口 208 和 5900 的访问规则"))
+        await router.handle_message(make_message(text="开放它"))
+
+        assert len(mock_agent.messages_received) >= 2
+        _, second_prompt = mock_agent.messages_received[1]
+        assert "[RECENT CONTEXT]" in second_prompt
+        assert "端口 208 和 5900" in second_prompt
+        assert "开放它" in second_prompt
+
+    @pytest.mark.asyncio
+    async def test_forward_injects_reply_target_context(self, router, make_message, mock_agent):
+        msg = IncomingMessage(
+            channel="telegram",
+            chat_id="chat_1",
+            user_id="123",
+            text="开放它",
+            is_private=True,
+            is_reply_to_bot=True,
+            is_mention_bot=False,
+            reply_to_text="如果需要本地网络访问，我可以开放 208 和 5900 端口。请确认是否继续。",
+        )
+        await router.handle_message(msg)
+
+        assert len(mock_agent.messages_received) == 1
+        _, prompt = mock_agent.messages_received[0]
+        assert "[REPLY TARGET]" in prompt
+        assert "208 和 5900 端口" in prompt
+
+
 class TestStreamingResponse:
 
     @pytest.mark.asyncio

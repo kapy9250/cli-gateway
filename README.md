@@ -182,6 +182,19 @@ kapy switch <id>       # 切换会话
 kapy kill              # 销毁当前会话
 ```
 
+短上下文注入（默认开启）：
+- 网关会把最近若干轮对话注入到当前 prompt，减少“它/这个/上一步”这类指代丢失。
+- 如果消息是“回复某条消息”，还会注入被回复文本（`reply_to_text`）帮助解析指代对象。
+
+```yaml
+session:
+  inject_recent_history: true
+  recent_history_turns: 4
+  recent_history_chars: 1200
+  inject_reply_to_text: true
+  reply_to_text_chars: 320
+```
+
 ### 模型配置
 
 ```bash

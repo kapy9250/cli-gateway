@@ -61,6 +61,12 @@ class Router:
         self.audit_logger = audit_logger
         self.rules_loader = RulesLoader()
         self.formatter = OutputFormatter(config.get("formatter", {}))
+        session_cfg = config.get("session", {}) if isinstance(config, dict) else {}
+        self.inject_recent_history = bool(session_cfg.get("inject_recent_history", True))
+        self.recent_history_turns = self._safe_positive_int(session_cfg.get("recent_history_turns"), default=4)
+        self.recent_history_chars = self._safe_positive_int(session_cfg.get("recent_history_chars"), default=1200)
+        self.inject_reply_to_text = bool(session_cfg.get("inject_reply_to_text", True))
+        self.reply_to_text_chars = self._safe_positive_int(session_cfg.get("reply_to_text_chars"), default=320)
 
         configured_default = config.get("default_agent", "codex")
         self.default_agent = (
@@ -286,6 +292,71 @@ class Router:
         """Remove a per-session cancel event if present."""
         self._cancel_events.pop(session_id, None)
 
+    @staticmethod
+    def _safe_positive_int(value: object, default: int) -> int:
+        try:
+            parsed = int(value)
+            if parsed > 0:
+                return parsed
+        except Exception:
+            pass
+        return int(default)
+
+    @staticmethod
+    def _inline_text(value: object, max_chars: int) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if not text:
+            return ""
+        limit = max(16, int(max_chars))
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3].rstrip() + "..."
+
+    def _build_recent_context(self, session_id: str) -> str:
+        if not self.inject_recent_history:
+            return ""
+        history = self.session_manager.get_history(session_id)
+        if not history:
+            return ""
+
+        max_items = max(2, int(self.recent_history_turns) * 2)
+        lines = ["[RECENT CONTEXT]"]
+        consumed = len(lines[0]) + 1
+        budget = max(200, int(self.recent_history_chars))
+        for entry in history[-max_items:]:
+            role = str(entry.get("role", "")).strip().lower()
+            speaker = "User" if role == "user" else ("Assistant" if role == "assistant" else "Message")
+            remaining = budget - consumed - len(speaker) - 8
+            if remaining <= 20:
+                break
+            snippet = self._inline_text(entry.get("content", ""), max_chars=min(280, remaining))
+            if not snippet:
+                continue
+            line = f"- {speaker}: {snippet}"
+            if consumed + len(line) + 1 > budget:
+                break
+            lines.append(line)
+            consumed += len(line) + 1
+        if len(lines) == 1:
+            return ""
+        lines.append("[END RECENT CONTEXT]")
+        return "\n".join(lines) + "\n\n"
+
+    def _build_reply_context(self, message: IncomingMessage) -> str:
+        if not self.inject_reply_to_text:
+            return ""
+        reply_text = self._inline_text(getattr(message, "reply_to_text", None), max_chars=self.reply_to_text_chars)
+        if not reply_text:
+            return ""
+        return "\n".join(
+            [
+                "[REPLY TARGET]",
+                f"- replied_message: {reply_text}",
+                "[END REPLY TARGET]",
+                "",
+            ]
+        )
+
     async def _prepare_prompt(self, message: IncomingMessage, agent: BaseAgent, current) -> str:
         """Build the final prompt: text + filtered attachments + channel context."""
         prompt = message.text
@@ -337,6 +408,8 @@ class Router:
             "If the task semantics clearly require notifying additional people, mention them too.\n"
             "[END SENDER CONTEXT]\n\n"
         )
+        recent_context = self._build_recent_context(str(getattr(current, "session_id", "") or ""))
+        reply_context = self._build_reply_context(message)
         memory_context = ""
         if self.memory_manager is not None:
             try:
@@ -350,7 +423,7 @@ class Router:
                 logger.warning("Failed to inject memory context: %s", e)
 
         if prompt:
-            prompt = f"{channel_context}{sender_context}{memory_context}{prompt}"
+            prompt = f"{channel_context}{sender_context}{recent_context}{reply_context}{memory_context}{prompt}"
 
         return prompt
 

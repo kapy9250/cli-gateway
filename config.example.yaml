@@ -285,6 +285,13 @@ session:
   cleanup_inactive_after_hours: 24
   cleanup_files_after_days: 7
   max_sessions_per_user: 5
+  # Inject recent short-term dialogue context into each new turn prompt.
+  inject_recent_history: true
+  recent_history_turns: 4
+  recent_history_chars: 1200
+  # Inject the replied message text (when user replies to bot) for pronoun resolution.
+  inject_reply_to_text: true
+  reply_to_text_chars: 320
 
 # ──────────── 长期记忆（PostgreSQL） ────────────
 # 默认关闭；开启后会将对话/流程等沉淀为短中长三级记忆。
