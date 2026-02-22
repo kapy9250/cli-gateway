@@ -170,6 +170,10 @@ class BaseAgent(ABC):
 
         return args
 
+    def _finalize_args(self, args: List[str], *, run_as_root: bool = False) -> List[str]:
+        """Last-mile args adjustment hook for agent-specific runtime behavior."""
+        return list(args)
+
     def _wrap_command(
         self,
         command: str,

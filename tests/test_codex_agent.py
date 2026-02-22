@@ -139,6 +139,58 @@ class TestSendMessage:
         assert action["instance_id"] == "user-main"
 
     @pytest.mark.asyncio
+    async def test_send_message_system_sudo_appends_dangerous_bypass(self, tmp_path, codex_config):
+        cfg = dict(codex_config)
+        cfg["args_template"] = ["exec", "{prompt}", "--full-auto"]
+        remote = FakeRemoteClient({"ok": True, "returncode": 0, "stdout": "remote-ok", "stderr": ""})
+        agent = CodexAgent(
+            "codex",
+            cfg,
+            tmp_path,
+            runtime_mode="system",
+            instance_id="ops-a",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            chunks = []
+            async for chunk in agent.send_message(session.session_id, "test", run_as_root=True):
+                chunks.append(chunk)
+
+        assert "remote-ok" in "".join(chunks)
+        assert not mock_exec.called
+        action = remote.calls[0]["action"]
+        assert "--dangerously-bypass-approvals-and-sandbox" in action["args"]
+        assert "--full-auto" not in action["args"]
+
+    @pytest.mark.asyncio
+    async def test_send_message_system_without_sudo_keeps_full_auto(self, tmp_path, codex_config):
+        cfg = dict(codex_config)
+        cfg["args_template"] = ["exec", "{prompt}", "--full-auto"]
+        remote = FakeRemoteClient({"ok": True, "returncode": 0, "stdout": "remote-ok", "stderr": ""})
+        agent = CodexAgent(
+            "codex",
+            cfg,
+            tmp_path,
+            runtime_mode="system",
+            instance_id="ops-a",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            chunks = []
+            async for chunk in agent.send_message(session.session_id, "test", run_as_root=False):
+                chunks.append(chunk)
+
+        assert "remote-ok" in "".join(chunks)
+        assert not mock_exec.called
+        action = remote.calls[0]["action"]
+        assert "--full-auto" in action["args"]
+        assert "--dangerously-bypass-approvals-and-sandbox" not in action["args"]
+
+    @pytest.mark.asyncio
     async def test_send_message_uses_remote_stream_frames_when_supported(self, tmp_path, codex_config):
         remote = FakeRemoteStreamClient(
             [

@@ -91,6 +91,10 @@ kapy sys config rollback /etc/myapp.conf /etc/myapp.conf.bak.20260216_200000
 # 可选兼容：仍支持 --challenge <challenge_id>
 ```
 
+⚠️ 高风险提示：在 `system` 实例且 `sudo:on` 时，`codex` agent 会自动切到
+`--dangerously-bypass-approvals-and-sandbox`（并移除 `--full-auto`），用于执行宿主机级命令。
+仅应在受控环境启用，并配合最小权限账户、审计与网络边界隔离。
+
 root 侧 system service（独立进程）：
 
 ```bash

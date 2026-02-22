@@ -133,6 +133,7 @@ class StreamingCliAgent(BaseAgent):
         try:
             command = self.config['command']
             args = self._build_args(message, session_id, model=model, params=params)
+            args = self._finalize_args(args, run_as_root=bool(run_as_root))
 
             env = os.environ.copy()
             env.update(self.config.get('env', {}))
