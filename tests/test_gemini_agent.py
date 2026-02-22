@@ -8,6 +8,16 @@ import pytest
 from agents.gemini_cli import GeminiAgent
 
 
+class FakeRemoteClient:
+    def __init__(self, response: dict):
+        self.response = dict(response)
+        self.calls = []
+
+    async def execute(self, user_id: str, action: dict, grant_token: str = None):
+        self.calls.append({"user_id": str(user_id), "action": dict(action or {})})
+        return dict(self.response)
+
+
 @pytest.fixture
 def gemini_config():
     return {
@@ -73,6 +83,66 @@ class TestSendMessage:
             async for chunk in agent.send_message(session.session_id, "test"):
                 chunks.append(chunk)
             assert any("未安装" in c or "未找到" in c for c in chunks)
+
+    @pytest.mark.asyncio
+    async def test_send_message_system_sudo_sets_yolo_and_disables_sandbox(self, tmp_path, gemini_config):
+        cfg = dict(gemini_config)
+        cfg["args_template"] = ["-p", "{prompt}", "--approval-mode", "default", "--sandbox=true"]
+        remote = FakeRemoteClient({"ok": True, "returncode": 0, "stdout": "remote-ok", "stderr": ""})
+        agent = GeminiAgent(
+            "gemini",
+            cfg,
+            tmp_path,
+            runtime_mode="system",
+            instance_id="ops-a",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            chunks = []
+            async for chunk in agent.send_message(session.session_id, "test", run_as_root=True):
+                chunks.append(chunk)
+
+        assert "remote-ok" in "".join(chunks)
+        assert not mock_exec.called
+        action = remote.calls[0]["action"]
+        assert "--yolo" in action["args"]
+        assert "--approval-mode" in action["args"]
+        idx = action["args"].index("--approval-mode")
+        assert action["args"][idx + 1] == "yolo"
+        assert "--sandbox=false" in action["args"]
+        assert "--sandbox=true" not in action["args"]
+
+    @pytest.mark.asyncio
+    async def test_send_message_system_without_sudo_keeps_default_approval_mode(self, tmp_path, gemini_config):
+        cfg = dict(gemini_config)
+        cfg["args_template"] = ["-p", "{prompt}", "--approval-mode", "default", "--sandbox=true"]
+        remote = FakeRemoteClient({"ok": True, "returncode": 0, "stdout": "remote-ok", "stderr": ""})
+        agent = GeminiAgent(
+            "gemini",
+            cfg,
+            tmp_path,
+            runtime_mode="system",
+            instance_id="ops-a",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            chunks = []
+            async for chunk in agent.send_message(session.session_id, "test", run_as_root=False):
+                chunks.append(chunk)
+
+        assert "remote-ok" in "".join(chunks)
+        assert not mock_exec.called
+        action = remote.calls[0]["action"]
+        assert "--approval-mode" in action["args"]
+        idx = action["args"].index("--approval-mode")
+        assert action["args"][idx + 1] == "default"
+        assert "--yolo" not in action["args"]
+        assert "--sandbox=true" in action["args"]
+        assert "--sandbox=false" not in action["args"]
 
 
 class TestDestroySession:

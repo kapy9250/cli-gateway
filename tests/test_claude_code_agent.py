@@ -208,6 +208,67 @@ class TestSendMessage:
         assert action["instance_id"] == "user-main"
 
     @pytest.mark.asyncio
+    async def test_send_message_system_sudo_appends_dangerous_skip_permissions(self, tmp_path, claude_config):
+        remote_payload = {
+            "ok": True,
+            "returncode": 0,
+            "stdout": json.dumps({"result": "remote-result", "usage": {"input_tokens": 1, "output_tokens": 1}}),
+            "stderr": "",
+        }
+        remote = FakeRemoteClient(remote_payload)
+        agent = ClaudeCodeAgent(
+            "claude",
+            claude_config,
+            tmp_path,
+            runtime_mode="system",
+            instance_id="ops-a",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            chunks = []
+            async for chunk in agent.send_message(session.session_id, "test prompt", run_as_root=True):
+                chunks.append(chunk)
+
+        assert "remote-result" in "".join(chunks)
+        assert not mock_exec.called
+        action = remote.calls[0]["action"]
+        assert "--dangerously-skip-permissions" in action["args"]
+        assert "--permission-mode" in action["args"]
+        idx = action["args"].index("--permission-mode")
+        assert action["args"][idx + 1] == "bypassPermissions"
+
+    @pytest.mark.asyncio
+    async def test_send_message_system_without_sudo_keeps_default_permissions(self, tmp_path, claude_config):
+        remote_payload = {
+            "ok": True,
+            "returncode": 0,
+            "stdout": json.dumps({"result": "remote-result", "usage": {"input_tokens": 1, "output_tokens": 1}}),
+            "stderr": "",
+        }
+        remote = FakeRemoteClient(remote_payload)
+        agent = ClaudeCodeAgent(
+            "claude",
+            claude_config,
+            tmp_path,
+            runtime_mode="system",
+            instance_id="ops-a",
+            system_client=remote,
+        )
+        session = await agent.create_session("u1", "c1")
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            chunks = []
+            async for chunk in agent.send_message(session.session_id, "test prompt", run_as_root=False):
+                chunks.append(chunk)
+
+        assert "remote-result" in "".join(chunks)
+        assert not mock_exec.called
+        action = remote.calls[0]["action"]
+        assert "--dangerously-skip-permissions" not in action["args"]
+
+    @pytest.mark.asyncio
     async def test_send_message_timeout(self, agent):
         session = await agent.create_session("u1", "c1")
         mock_proc = AsyncMock()

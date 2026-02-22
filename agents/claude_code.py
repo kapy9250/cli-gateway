@@ -9,7 +9,7 @@ import os
 import uuid
 import time
 from pathlib import Path
-from typing import AsyncIterator, Dict, Optional
+from typing import AsyncIterator, Dict, List, Optional
 
 from agents.base import BaseAgent, SessionInfo, UsageInfo
 from utils.constants import CLI_OUTPUT_FORMAT_FLAG, CLI_OUTPUT_FORMAT_JSON
@@ -23,6 +23,10 @@ class ClaudeCodeAgent(BaseAgent):
 
     Uses non-interactive mode: claude -p "prompt" --session-id <sid> --output-format text
     """
+
+    _DANGEROUS_SKIP_PERMISSIONS = "--dangerously-skip-permissions"
+    _PERMISSION_MODE = "--permission-mode"
+    _PERMISSION_MODE_BYPASS = "bypassPermissions"
 
     def __init__(
         self,
@@ -200,6 +204,7 @@ class ClaudeCodeAgent(BaseAgent):
                     param_flag = supported.get(key)
                     if param_flag:
                         args.extend([param_flag, str(value)])
+            args = self._finalize_args(args, run_as_root=bool(run_as_root))
 
             # Environment
             env = os.environ.copy()
@@ -342,6 +347,27 @@ class ClaudeCodeAgent(BaseAgent):
                 logger.info("Killed subprocess on generator close for session %s", session_id)
             session.is_busy = False
             session.last_active = time.time()
+
+    def _finalize_args(self, args: List[str], *, run_as_root: bool = False) -> List[str]:
+        out = list(args)
+        if str(self.runtime_mode).lower() not in {"system", "sys"} or not bool(run_as_root):
+            return out
+
+        normalized: List[str] = []
+        i = 0
+        while i < len(out):
+            token = out[i]
+            if token == self._PERMISSION_MODE:
+                i += 2
+                continue
+            normalized.append(token)
+            i += 1
+
+        out = normalized
+        if self._DANGEROUS_SKIP_PERMISSIONS not in out:
+            out.append(self._DANGEROUS_SKIP_PERMISSIONS)
+        out.extend([self._PERMISSION_MODE, self._PERMISSION_MODE_BYPASS])
+        return out
 
     async def cancel(self, session_id: str):
         """Cancel current operation"""
