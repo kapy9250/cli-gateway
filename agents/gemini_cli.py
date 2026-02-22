@@ -11,8 +11,10 @@ class GeminiAgent(StreamingCliAgent):
 
     agent_label = "Gemini"
     _YOLO = "--yolo"
+    _YOLO_SHORT = "-y"
     _APPROVAL_MODE = "--approval-mode"
-    _APPROVAL_MODE_YOLO = "yolo"
+    _APPROVAL_MODE_PREFIX = "--approval-mode="
+    _APPROVAL_MODE_YOLO_FLAG = "--approval-mode=yolo"
     _SANDBOX_FALSE = "--sandbox=false"
 
     def _finalize_args(self, args: List[str], *, run_as_root: bool = False) -> List[str]:
@@ -27,6 +29,12 @@ class GeminiAgent(StreamingCliAgent):
             if token == self._APPROVAL_MODE:
                 i += 2
                 continue
+            if token.startswith(self._APPROVAL_MODE_PREFIX):
+                i += 1
+                continue
+            if token in {self._YOLO, self._YOLO_SHORT}:
+                i += 1
+                continue
             if token == "--sandbox":
                 i += 2
                 continue
@@ -37,8 +45,6 @@ class GeminiAgent(StreamingCliAgent):
             i += 1
 
         out = normalized
-        if self._YOLO not in out:
-            out.append(self._YOLO)
-        out.extend([self._APPROVAL_MODE, self._APPROVAL_MODE_YOLO])
+        out.append(self._APPROVAL_MODE_YOLO_FLAG)
         out.append(self._SANDBOX_FALSE)
         return out

@@ -85,9 +85,9 @@ class TestSendMessage:
             assert any("未安装" in c or "未找到" in c for c in chunks)
 
     @pytest.mark.asyncio
-    async def test_send_message_system_sudo_sets_yolo_and_disables_sandbox(self, tmp_path, gemini_config):
+    async def test_send_message_system_sudo_sets_approval_mode_yolo_and_disables_sandbox(self, tmp_path, gemini_config):
         cfg = dict(gemini_config)
-        cfg["args_template"] = ["-p", "{prompt}", "--approval-mode", "default", "--sandbox=true"]
+        cfg["args_template"] = ["-p", "{prompt}", "--approval-mode", "default", "--yolo", "--sandbox=true"]
         remote = FakeRemoteClient({"ok": True, "returncode": 0, "stdout": "remote-ok", "stderr": ""})
         agent = GeminiAgent(
             "gemini",
@@ -107,10 +107,10 @@ class TestSendMessage:
         assert "remote-ok" in "".join(chunks)
         assert not mock_exec.called
         action = remote.calls[0]["action"]
-        assert "--yolo" in action["args"]
-        assert "--approval-mode" in action["args"]
-        idx = action["args"].index("--approval-mode")
-        assert action["args"][idx + 1] == "yolo"
+        assert "--approval-mode=yolo" in action["args"]
+        assert "--approval-mode" not in action["args"]
+        assert "--yolo" not in action["args"]
+        assert "-y" not in action["args"]
         assert "--sandbox=false" in action["args"]
         assert "--sandbox=true" not in action["args"]
 
